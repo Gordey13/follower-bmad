@@ -1,0 +1,36 @@
+services:
+  mcp-agent-mail:
+    image: mcp-agent-mail
+    environment:
+      HTTP_BEARER_TOKEN: "/root/.env"
+      DATABASE_URL: "sqlite:////app/data/storage.sqlite3"
+    ports:
+      - "8765:8765"
+    volumes:
+      #- mcp-agent-mail-data:/app/data
+      - ./.env:/root/.env
+    networks:
+      - op-network
+    restart: unless-stopped
+
+  opencode:
+    image: opencode
+    ports:
+      - "4096:4096"
+    volumes:
+      - opencode-data:/root/.local/share/opencode
+      - opencode-config:/root/.config/opencode
+    networks:
+      - op-network
+    depends_on:
+      - mcp-agent-mail
+    restart: unless-stopped
+
+networks:
+  op-network:
+    driver: bridge
+
+volumes:
+  #mcp-agent-mail-data:
+  opencode-data:
+  opencode-config:

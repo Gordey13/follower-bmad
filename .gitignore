@@ -1,0 +1,85 @@
+# Code
+tmpclaude-*
+.beads/
+.perles/
+.memory-bank/
+.gomodcache/
+.gocache/
+
+# Временные файлы ОС
+*.tmp
+*.temp
+temp/
+*~
+.DS_Store
+Thumbs.db
+bin/
+scripts/
+SKILLS/
+
+# Логи
+*.log
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node.js
+node_modules/
+
+# Переменные окружения
+.env
+.env.local
+.env.*.local
+
+# Данные и бэкапы
+*.db
+*.sqlite
+*.sqlite3
+/data/
+/backups/
+
+# Торговые данные и секреты
+*.csv
+*.parquet
+credentials/
+secrets/
+api_keys/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# bmad
+_bmad-output/
+_bmad/

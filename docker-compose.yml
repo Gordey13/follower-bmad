@@ -1,0 +1,61 @@
+services:
+  follower:
+    image: follower:latest
+    depends_on:
+      - postgres
+      - minio
+      - redis
+    environment:
+      PLAYWRIGHT_DRIVER_PATH: /opt/playwright-driver
+      PLAYWRIGHT_NODEJS_PATH: /opt/playwright-driver/node
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      FOLLOWER_PROXY_ENABLED: "false"
+      FOLLOWER_SESSION_BOOTSTRAP_LOGIN_ENABLED: "true"
+      FOLLOWER_SESSION_ALLOW_MISSING_PAYLOAD_ON_FIRST_RUN: "true"
+      FOLLOWER_WORKER_LOOP_INTERVAL_SECONDS: "1"
+      OSKELLY_LOGIN: 'gm-liker@yandex.ru'
+      OSKELLY_PASSWORD: 'rWF-UhV-8pb-U7M'
+    labels:
+      follower.endpoint.healthz.host: "http://localhost:${FOLLOWER_HTTP_PORT:-8080}/healthz"
+      follower.endpoint.metrics.host: "http://localhost:${FOLLOWER_HTTP_PORT:-8080}/metrics"
+    ports:
+      - "${FOLLOWER_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./config.compose.yaml:/app/config.yaml:ro
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-follower_automation}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/migrations:/db-migrations:ro
+      - ./scripts/postgres-init-migrations.sh:/docker-entrypoint-initdb.d/010-apply-migrations.sh:ro
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  minio_data:
+  redis_data:

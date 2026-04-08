@@ -1,0 +1,43 @@
+app:
+  name: follower
+  env: dev
+  version: "0.1.0"
+  http_address: ":8080"
+  shutdown_timeout_seconds: 20
+  read_timeout_seconds: 10
+  write_timeout_seconds: 10
+  idle_timeout_seconds: 60
+
+worker:
+  loop_interval_seconds: 30
+
+session:
+  bootstrap_login_enabled: true
+  allow_missing_payload_on_first_run: true
+
+postgres:
+  url: postgres://postgres:password@127.0.0.1:5432/follower_automation?sslmode=disable
+
+minio:
+  endpoint: 127.0.0.1:9000
+  access_key: minioadmin
+  secret_key: minioadmin
+  use_ssl: false
+  bucket: artifacts
+
+proxy:
+  enabled: false
+
+browser:
+  engine: mock
+  headless: true
+  launch_timeout_seconds: 30
+
+smoke:
+  artifact_prefix: technical-smoke
+
+policy:
+  guardrails:
+    exclude_when_limit_reached: true
+    restrict_when_threshold_reached: true
+    quarantine_on_limit_reached: true

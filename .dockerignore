@@ -1,0 +1,38 @@
+# VCS
+.git/
+.gitignore
+
+# Build and generated artifacts
+dist/
+build/
+_bmad-output/
+
+# Local BMAD workspace state
+_bmad/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+*.swp
+*.swo
+*~
+
+# OS/IDE noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Env and secrets
+.env
+.env.local
+.env.*.local
+
+# Language-specific caches
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+node_modules/

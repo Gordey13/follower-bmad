@@ -1,0 +1,22 @@
+FROM node-base:latest AS installer
+RUN curl -fsSL https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-x64.tar.gz -o /tmp/opencode.tar.gz && \
+    tar -xzf /tmp/opencode.tar.gz -C /tmp && \
+    mv /tmp/opencode /usr/local/bin/opencode && \
+    chmod +x /usr/local/bin/opencode && \
+    rm -rf /tmp/opencode.tar.gz /tmp/opencode && \
+    rm -rf /var/lib/apt/lists/*
+
+FROM node-base:latest
+
+COPY --from=installer /usr/local/bin/opencode /usr/local/bin/opencode
+COPY bin/am /usr/local/bin/am
+
+RUN chmod +x /usr/local/bin/opencode /usr/local/bin/am
+
+ENV DATABASE_URL="sqlite:////app/data/storage.sqlite3"
+
+EXPOSE 4096
+
+WORKDIR /root
+
+ENTRYPOINT ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096", "--log-level", "INFO"]

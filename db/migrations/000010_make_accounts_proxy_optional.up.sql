@@ -1,0 +1,2 @@
+ALTER TABLE accounts
+    ALTER COLUMN proxy_id DROP NOT NULL;
