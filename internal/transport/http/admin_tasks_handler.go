@@ -16,7 +16,7 @@ import (
 
 // Admin API v1 envelope examples:
 // Success: {"data":{"tasks":[]},"error":null,"meta":{}}
-// Error: {"data":null,"error":{"code":"ADMIN_ENDPOINT_NOT_IMPLEMENTED","message":"admin endpoint is not implemented yet","details":{"endpoint":"GET /api/v1/tasks"}},"meta":{}}
+// Error: {"data":null,"error":{"code":"ADMIN_ENDPOINT_NOT_AVAILABLE","message":"admin endpoint is temporarily unavailable","details":{"endpoint":"GET /api/v1/tasks"}},"meta":{}}
 type adminCSVQueueWriter interface {
 	EnqueueValidatedBatch(
 		ctx context.Context,
@@ -26,6 +26,10 @@ type adminCSVQueueWriter interface {
 
 type adminTaskReader interface {
 	GetByID(ctx context.Context, taskID uuid.UUID) (domain.Task, error)
+}
+
+type adminTaskLister interface {
+	List(ctx context.Context, limit int, offset int) ([]domain.Task, error)
 }
 
 type adminTaskFailuresReader interface {
@@ -47,6 +51,7 @@ type adminResultReader interface {
 type adminTasksHandler struct {
 	queueWriter    adminCSVQueueWriter
 	taskReader     adminTaskReader
+	listReader     adminTaskLister
 	failuresReader adminTaskFailuresReader
 	retrier        adminTaskRetrier
 	canceler       adminTaskCanceler
@@ -77,9 +82,13 @@ func NewAdminTasksHandler(
 	options ...AdminTasksHandlerOption,
 ) stdhttp.Handler {
 	var failuresReader adminTaskFailuresReader
+	var listReader adminTaskLister
 	var retrier adminTaskRetrier
 	var canceler adminTaskCanceler
 	if taskReader != nil {
+		if reader, ok := taskReader.(adminTaskLister); ok {
+			listReader = reader
+		}
 		if reader, ok := taskReader.(adminTaskFailuresReader); ok {
 			failuresReader = reader
 		}
@@ -93,6 +102,7 @@ func NewAdminTasksHandler(
 	handler := adminTasksHandler{
 		queueWriter:    queueWriter,
 		taskReader:     taskReader,
+		listReader:     listReader,
 		failuresReader: failuresReader,
 		retrier:        retrier,
 		canceler:       canceler,
@@ -115,8 +125,34 @@ func NewAdminTasksHandler(
 	return mux
 }
 
-func (adminTasksHandler) listTasks(w stdhttp.ResponseWriter, _ *stdhttp.Request) {
-	writeAdminEndpointNotImplemented(w, "GET /api/v1/tasks")
+func (handler adminTasksHandler) listTasks(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if handler.listReader == nil {
+		writeAdminEndpointNotAvailable(w, "GET /api/v1/tasks")
+		return
+	}
+
+	const (
+		defaultLimit  = 200
+		defaultOffset = 0
+	)
+
+	tasks, err := handler.listReader.List(r.Context(), defaultLimit, defaultOffset)
+	if err != nil {
+		writeAdminErrorResponse(w, stdhttp.StatusInternalServerError, adminErrorPayload{
+			Code:    string(AdminErrorCodeInternalAdminAPIError),
+			Message: "failed to fetch tasks",
+		})
+		return
+	}
+
+	items := make([]adminTaskListDTO, 0, len(tasks))
+	for _, task := range tasks {
+		items = append(items, newAdminTaskListDTO(task))
+	}
+
+	writeAdminSuccessResponse(w, stdhttp.StatusOK, adminTaskListResponseDTO{
+		Tasks: items,
+	})
 }
 
 func (handler adminTasksHandler) getTask(w stdhttp.ResponseWriter, r *stdhttp.Request) {

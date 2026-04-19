@@ -357,6 +357,96 @@ func (r *TaskPostgresRepository) GetByID(ctx context.Context, taskID uuid.UUID) 
 	return task, err
 }
 
+func (r *TaskPostgresRepository) List(
+	ctx context.Context,
+	limit int,
+	offset int,
+) ([]domain.Task, error) {
+	if limit <= 0 {
+		return nil, domain.NewDomainError(
+			domain.ErrorCodeInvalidTaskTransition,
+			fmt.Sprintf("tasks list limit must be > 0, got %d", limit),
+		)
+	}
+	if offset < 0 {
+		return nil, domain.NewDomainError(
+			domain.ErrorCodeInvalidTaskTransition,
+			fmt.Sprintf("tasks list offset must be >= 0, got %d", offset),
+		)
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			id,
+			source_task_id,
+			account_id,
+			target_profile,
+			status,
+			attempt,
+			COALESCE(claimed_by, ''),
+			claimed_at,
+			started_at,
+			finished_at,
+			COALESCE(error_code, ''),
+			COALESCE(result_reason, ''),
+			created_at,
+			updated_at
+		FROM tasks
+		ORDER BY updated_at DESC, id DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tasks := make([]domain.Task, 0, limit)
+	for rows.Next() {
+		var task domain.Task
+		var targetProfile string
+		var status string
+		var claimedAt *time.Time
+		var startedAt *time.Time
+		var finishedAt *time.Time
+		var errorCode string
+		var resultReason string
+
+		if scanErr := rows.Scan(
+			&task.ID,
+			&task.SourceTaskID,
+			&task.AccountID,
+			&targetProfile,
+			&status,
+			&task.Attempt,
+			&task.ClaimedBy,
+			&claimedAt,
+			&startedAt,
+			&finishedAt,
+			&errorCode,
+			&resultReason,
+			&task.CreatedAt,
+			&task.UpdatedAt,
+		); scanErr != nil {
+			return nil, scanErr
+		}
+
+		task.TargetProfile = domain.TargetProfileDescriptor(targetProfile)
+		task.Status = domain.TaskStatus(status)
+		task.ClaimedAt = claimedAt
+		task.StartedAt = startedAt
+		task.FinishedAt = finishedAt
+		task.ErrorCode = domain.ErrorCode(errorCode)
+		task.ResultReason = resultReason
+
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return tasks, nil
+}
+
 func (r *TaskPostgresRepository) ListFailures(
 	ctx context.Context,
 	limit int,

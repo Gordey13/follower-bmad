@@ -42,7 +42,7 @@ func TestAdminTaskSkeletonEndpointsReturnStandardizedEnvelope(t *testing.T) {
 		status    int
 		errorCode string
 	}{
-		{name: "tasks list", method: stdhttp.MethodGet, path: "/api/v1/tasks", status: stdhttp.StatusNotImplemented, errorCode: string(AdminErrorCodeEndpointNotImplemented)},
+		{name: "tasks list", method: stdhttp.MethodGet, path: "/api/v1/tasks", status: stdhttp.StatusServiceUnavailable, errorCode: string(AdminErrorCodeEndpointTemporarilyClosed)},
 		{name: "task retry", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/retry", status: stdhttp.StatusServiceUnavailable, errorCode: string(AdminErrorCodeEndpointTemporarilyClosed)},
 		{name: "task cancel", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/cancel", status: stdhttp.StatusServiceUnavailable, errorCode: string(AdminErrorCodeEndpointTemporarilyClosed)},
 		{name: "task failures", method: stdhttp.MethodGet, path: "/api/v1/tasks/failures", status: stdhttp.StatusServiceUnavailable, errorCode: string(AdminErrorCodeEndpointTemporarilyClosed)},
@@ -78,6 +78,106 @@ func TestAdminTaskSkeletonEndpointsReturnStandardizedEnvelope(t *testing.T) {
 				t.Fatalf("expected error code %q, got %q", tc.errorCode, envelope.Error.Code)
 			}
 		})
+	}
+}
+
+func TestAdminTaskListEndpointReturnsTasks(t *testing.T) {
+	t.Parallel()
+
+	taskID := uuid.New()
+	accountID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	taskReader := &fakeAdminTaskReader{
+		tasks: []domain.Task{
+			{
+				ID:            taskID,
+				AccountID:     accountID,
+				TargetProfile: "https://oskelly.ru/profile/1001",
+				Status:        domain.TaskStatusQueued,
+				Attempt:       0,
+				UpdatedAt:     now,
+			},
+		},
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	resp, err := stdhttp.Get(server.URL + "/api/v1/tasks")
+	if err != nil {
+		t.Fatalf("GET /api/v1/tasks failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var envelope struct {
+		Data struct {
+			Tasks []adminTaskListDTO `json:"tasks"`
+		} `json:"data"`
+		Error *adminErrorPayload `json:"error"`
+		Meta  adminMetaEnvelope  `json:"meta"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Error != nil {
+		t.Fatalf("expected success envelope, got error %+v", envelope.Error)
+	}
+	if len(envelope.Data.Tasks) != 1 {
+		t.Fatalf("expected 1 listed task, got %d", len(envelope.Data.Tasks))
+	}
+	if envelope.Data.Tasks[0].ID != taskID.String() {
+		t.Fatalf("expected task id %s, got %s", taskID.String(), envelope.Data.Tasks[0].ID)
+	}
+	if envelope.Data.Tasks[0].Status != string(domain.TaskStatusQueued) {
+		t.Fatalf("expected status %s, got %s", domain.TaskStatusQueued, envelope.Data.Tasks[0].Status)
+	}
+	if taskReader.listCalls != 1 {
+		t.Fatalf("expected List to be called once, got %d", taskReader.listCalls)
+	}
+	if taskReader.lastListLimit != 200 || taskReader.lastListOffset != 0 {
+		t.Fatalf(
+			"expected default pagination limit/offset 200/0, got %d/%d",
+			taskReader.lastListLimit,
+			taskReader.lastListOffset,
+		)
+	}
+}
+
+func TestAdminTaskListEndpointReturnsInternalErrorWhenRepositoryFails(t *testing.T) {
+	t.Parallel()
+
+	taskReader := &fakeAdminTaskReader{
+		listErr: errors.New("db timeout secret=abc"),
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	resp, err := stdhttp.Get(server.URL + "/api/v1/tasks")
+	if err != nil {
+		t.Fatalf("GET /api/v1/tasks failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", resp.StatusCode)
+	}
+
+	var envelope adminResponseEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Error == nil {
+		t.Fatal("expected error envelope")
+	}
+	if envelope.Error.Code != string(AdminErrorCodeInternalAdminAPIError) {
+		t.Fatalf("expected %q, got %q", AdminErrorCodeInternalAdminAPIError, envelope.Error.Code)
+	}
+	if strings.Contains(strings.ToLower(envelope.Error.Message), "secret") {
+		t.Fatalf("unexpected secret in error message: %q", envelope.Error.Message)
 	}
 }
 
@@ -1321,9 +1421,14 @@ func (f *fakeAdminBatchWriter) EnqueueValidatedBatch(
 
 type fakeAdminTaskReader struct {
 	task              domain.Task
+	tasks             []domain.Task
 	err               error
+	listErr           error
 	calls             int
+	listCalls         int
 	gotID             uuid.UUID
+	lastListLimit     int
+	lastListOffset    int
 	retryTask         domain.Task
 	retryErr          error
 	retryCalls        int
@@ -1348,6 +1453,21 @@ func (f *fakeAdminTaskReader) GetByID(ctx context.Context, taskID uuid.UUID) (do
 		return domain.Task{}, f.err
 	}
 	return f.task, nil
+}
+
+func (f *fakeAdminTaskReader) List(
+	ctx context.Context,
+	limit int,
+	offset int,
+) ([]domain.Task, error) {
+	_ = ctx
+	f.listCalls++
+	f.lastListLimit = limit
+	f.lastListOffset = offset
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return append([]domain.Task(nil), f.tasks...), nil
 }
 
 func (f *fakeAdminTaskReader) ListFailures(

@@ -381,6 +381,98 @@ func TestTaskRepositoryGetByIDReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestTaskRepositoryListSortsByUpdatedAtAndPaginates(t *testing.T) {
+	pool := mustOpenTestPool(t)
+	repository := postgresrepo.NewTaskRepository(pool)
+	accountID := createTestAccount(t, pool, "task-list-all-01")
+
+	enqueueClaimComplete := func(
+		target string,
+		worker string,
+		status domain.TaskStatus,
+		errorCode domain.ErrorCode,
+		reason string,
+	) {
+		t.Helper()
+		taskID := uuid.New()
+		if _, err := repository.Enqueue(context.Background(), domain.Task{
+			ID:            taskID,
+			AccountID:     accountID,
+			TargetProfile: domain.TargetProfileDescriptor(target),
+			Status:        domain.TaskStatusQueued,
+		}); err != nil {
+			t.Fatalf("Enqueue(%s) error = %v", target, err)
+		}
+		if _, ok, err := repository.ClaimNextQueued(context.Background(), worker); err != nil || !ok {
+			t.Fatalf("ClaimNextQueued(%s) expected success, got ok=%v err=%v", worker, ok, err)
+		}
+		if _, err := repository.Complete(
+			context.Background(),
+			taskID,
+			worker,
+			status,
+			errorCode,
+			reason,
+		); err != nil {
+			t.Fatalf("Complete(%s) error = %v", target, err)
+		}
+	}
+
+	enqueueClaimComplete(
+		"https://oskelly.ru/profile/list-success-1",
+		"worker-list-success-1",
+		domain.TaskStatusSuccess,
+		"",
+		"",
+	)
+	time.Sleep(10 * time.Millisecond)
+	enqueueClaimComplete(
+		"https://oskelly.ru/profile/list-retry-1",
+		"worker-list-retry-1",
+		domain.TaskStatusRetry,
+		domain.ErrorCodeInternal,
+		"transient failure",
+	)
+
+	tasks, err := repository.List(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	}
+	if tasks[0].Status != domain.TaskStatusRetry {
+		t.Fatalf("expected first status %s, got %s", domain.TaskStatusRetry, tasks[0].Status)
+	}
+	if tasks[1].Status != domain.TaskStatusSuccess {
+		t.Fatalf("expected second status %s, got %s", domain.TaskStatusSuccess, tasks[1].Status)
+	}
+
+	page, err := repository.List(context.Background(), 1, 1)
+	if err != nil {
+		t.Fatalf("List() pagination error = %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("expected pagination result size 1, got %d", len(page))
+	}
+	if page[0].Status != domain.TaskStatusSuccess {
+		t.Fatalf("expected paged status %s, got %s", domain.TaskStatusSuccess, page[0].Status)
+	}
+}
+
+func TestTaskRepositoryListReturnsEmptyWhenNoTasks(t *testing.T) {
+	pool := mustOpenTestPool(t)
+	repository := postgresrepo.NewTaskRepository(pool)
+
+	tasks, err := repository.List(context.Background(), 20, 0)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected empty task list, got %d items", len(tasks))
+	}
+}
+
 func TestTaskRepositoryListFailuresFiltersSortsAndPaginates(t *testing.T) {
 	pool := mustOpenTestPool(t)
 	repository := postgresrepo.NewTaskRepository(pool)

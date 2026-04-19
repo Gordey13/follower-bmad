@@ -30,7 +30,7 @@ func TestServerRegistersTechnicalAndAdminRoutes(t *testing.T) {
 	}{
 		{name: "healthz", method: stdhttp.MethodGet, path: "/healthz", wantStatus: stdhttp.StatusOK},
 		{name: "metrics", method: stdhttp.MethodGet, path: "/metrics", wantStatus: stdhttp.StatusOK},
-		{name: "tasks list skeleton", method: stdhttp.MethodGet, path: "/api/v1/tasks", wantStatus: stdhttp.StatusNotImplemented},
+		{name: "tasks list skeleton", method: stdhttp.MethodGet, path: "/api/v1/tasks", wantStatus: stdhttp.StatusServiceUnavailable},
 		{name: "task get detail route", method: stdhttp.MethodGet, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001", wantStatus: stdhttp.StatusServiceUnavailable},
 		{name: "task retry skeleton", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/retry", wantStatus: stdhttp.StatusServiceUnavailable},
 		{name: "task cancel skeleton", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/cancel", wantStatus: stdhttp.StatusServiceUnavailable},
