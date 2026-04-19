@@ -48,29 +48,33 @@ func (g *AccountGuard) Acquire(
 	if !decision.Eligible {
 		decision = normalizeEligibilityDecision(decision)
 
-		if applyErr := g.quota.ApplyDecision(ctx, accountID, decision); applyErr != nil {
-			g.logger.Error("failed to apply account quota decision",
+		// On restarts the same execution context can remain persisted as active.
+		// Try idempotent claim first to allow seamless resume for that context.
+		if decision.ReasonCode != domain.ErrorCodeAccountBusy {
+			if applyErr := g.quota.ApplyDecision(ctx, accountID, decision); applyErr != nil {
+				g.logger.Error("failed to apply account quota decision",
+					"account_id", accountID.String(),
+					"error_code", resolveErrorCode(applyErr),
+				)
+				return domain.AccountWithProxy{}, errors.Join(
+					domain.NewDomainError(
+						decision.ReasonCode,
+						fmt.Sprintf("account eligibility outcome=%s", decision.Outcome),
+					),
+					fmt.Errorf("apply quota decision: %w", applyErr),
+				)
+			}
+
+			g.logger.Warn(g.quota.EventName(decision),
 				"account_id", accountID.String(),
-				"error_code", resolveErrorCode(applyErr),
+				"eligibility_outcome", decision.Outcome,
+				"error_code", decision.ReasonCode,
 			)
-			return domain.AccountWithProxy{}, errors.Join(
-				domain.NewDomainError(
-					decision.ReasonCode,
-					fmt.Sprintf("account eligibility outcome=%s", decision.Outcome),
-				),
-				fmt.Errorf("apply quota decision: %w", applyErr),
+			return domain.AccountWithProxy{}, domain.NewDomainError(
+				decision.ReasonCode,
+				fmt.Sprintf("account eligibility outcome=%s", decision.Outcome),
 			)
 		}
-
-		g.logger.Warn(g.quota.EventName(decision),
-			"account_id", accountID.String(),
-			"eligibility_outcome", decision.Outcome,
-			"error_code", decision.ReasonCode,
-		)
-		return domain.AccountWithProxy{}, domain.NewDomainError(
-			decision.ReasonCode,
-			fmt.Sprintf("account eligibility outcome=%s", decision.Outcome),
-		)
 	}
 
 	if _, err := g.repository.ClaimAccount(ctx, accountID, executionContextID); err != nil {

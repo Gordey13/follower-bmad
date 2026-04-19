@@ -413,3 +413,47 @@ func TestAcquireReturnsCombinedErrorWhenQuotaApplyFails(t *testing.T) {
 		t.Fatalf("expected joined error to include decision reason code, got %v", err)
 	}
 }
+
+func TestAcquireAllowsReclaimWhenEligibilityReportsBusyForSameContext(t *testing.T) {
+	t.Parallel()
+
+	accountID := uuid.New()
+	claimCalls := 0
+
+	repository := &mockAccountRepository{
+		checkEligibilityFn: func(ctx context.Context, accountID uuid.UUID) (domain.EligibilityDecision, error) {
+			return domain.EligibilityDecision{
+				Eligible:   false,
+				Outcome:    domain.EligibilityOutcomeExcluded,
+				ReasonCode: domain.ErrorCodeAccountBusy,
+			}, nil
+		},
+		claimAccountFn: func(ctx context.Context, accountID uuid.UUID, executionContextID string) (domain.Account, error) {
+			claimCalls++
+			if executionContextID != "follower-1" {
+				t.Fatalf("expected execution context follower-1, got %s", executionContextID)
+			}
+			return domain.Account{
+				ID:                       accountID,
+				ActiveExecutionContextID: executionContextID,
+			}, nil
+		},
+		getWithProxyFn: func(ctx context.Context, accountID uuid.UUID) (domain.AccountWithProxy, error) {
+			return domain.AccountWithProxy{
+				Account: domain.Account{ID: accountID},
+			}, nil
+		},
+	}
+
+	guard := newTestGuard(repository)
+	acquired, err := guard.Acquire(context.Background(), accountID, "follower-1")
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if acquired.Account.ID != accountID {
+		t.Fatalf("expected account id %s, got %s", accountID.String(), acquired.Account.ID.String())
+	}
+	if claimCalls != 1 {
+		t.Fatalf("expected exactly 1 claim call, got %d", claimCalls)
+	}
+}
