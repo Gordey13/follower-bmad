@@ -32,12 +32,25 @@ func (a *defaultPlaywrightFollowAdapter) Warmup(
 	}
 	defer runtime.close()
 
+	if isAuthenticationRequiredPage(runtime.page, defaultOskellyFollowRules.Selectors.AuthRequiredSignals) {
+		return domain.NewDomainError(
+			domain.ErrorCodeAuthBootstrapRequired,
+			"follow warmup requires authenticated session",
+		)
+	}
+
 	if !waitAnySelectorWithContext(
 		ctx,
 		runtime.page,
 		playwrightWarmupReadySelectors(),
 		defaultOskellyFollowRules.Timeouts.Readiness,
 	) {
+		if isAuthenticationRequiredPage(runtime.page, defaultOskellyFollowRules.Selectors.AuthRequiredSignals) {
+			return domain.NewDomainError(
+				domain.ErrorCodeAuthBootstrapRequired,
+				"follow warmup requires authenticated session",
+			)
+		}
 		return domain.NewDomainError(
 			domain.ErrorCodeFollowActionUnavailable,
 			"follow warmup could not detect supported profile UI controls",
@@ -57,12 +70,25 @@ func (a *defaultPlaywrightFollowAdapter) RunFollowAction(
 	}
 	defer runtime.close()
 
+	if isAuthenticationRequiredPage(runtime.page, defaultOskellyFollowRules.Selectors.AuthRequiredSignals) {
+		return "", domain.NewDomainError(
+			domain.ErrorCodeAuthBootstrapRequired,
+			"follow flow requires authenticated session",
+		)
+	}
+
 	if !waitAnySelectorWithContext(
 		ctx,
 		runtime.page,
 		playwrightFollowInteractiveSelectors(),
 		defaultOskellyFollowRules.Timeouts.Readiness,
 	) {
+		if isAuthenticationRequiredPage(runtime.page, defaultOskellyFollowRules.Selectors.AuthRequiredSignals) {
+			return "", domain.NewDomainError(
+				domain.ErrorCodeAuthBootstrapRequired,
+				"follow flow requires authenticated session",
+			)
+		}
 		return domain.FollowFlowOutcomeActionUnavailable, nil
 	}
 
@@ -112,6 +138,12 @@ func (a *defaultPlaywrightFollowAdapter) RunFollowAction(
 			2*time.Second,
 		) {
 			return domain.FollowFlowOutcomeActionUnavailable, nil
+		}
+		if isAuthenticationRequiredPage(runtime.page, defaultOskellyFollowRules.Selectors.AuthRequiredSignals) {
+			return "", domain.NewDomainError(
+				domain.ErrorCodeAuthBootstrapRequired,
+				"follow flow requires authenticated session",
+			)
 		}
 
 		if attempt < maxClickAttempts && hasSubscribeButtonText(runtime.page) {
@@ -189,6 +221,15 @@ func newPlaywrightFollowRuntime(
 		return nil, domain.NewDomainError(
 			domain.ErrorCodeFollowTargetUnreachable,
 			fmt.Sprintf("target profile navigation failed with status=%d", response.Status()),
+		)
+	}
+	if isAuthenticationRequiredPage(page, defaultOskellyFollowRules.Selectors.AuthRequiredSignals) {
+		_ = browserContext.Close()
+		_ = browserInstance.Close()
+		_ = pw.Stop()
+		return nil, domain.NewDomainError(
+			domain.ErrorCodeAuthBootstrapRequired,
+			"session restore requires authentication before follow flow",
 		)
 	}
 	if !isResolvedOskellyProfileURL(page.URL()) {

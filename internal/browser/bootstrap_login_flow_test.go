@@ -33,16 +33,17 @@ func (r *mockBootstrapResolver) Resolve(
 }
 
 type mockPlaywrightBootstrapAdapter struct {
-	outcome domain.BootstrapLoginOutcome
-	payload []byte
-	err     error
+	outcome         domain.BootstrapLoginOutcome
+	payload         []byte
+	authScreenshots map[string][]byte
+	err             error
 }
 
 func (a *mockPlaywrightBootstrapAdapter) Execute(
 	ctx context.Context,
 	credentials domain.AccountCredentials,
-) (domain.BootstrapLoginOutcome, []byte, error) {
-	return a.outcome, a.payload, a.err
+) (domain.BootstrapLoginOutcome, []byte, map[string][]byte, error) {
+	return a.outcome, a.payload, a.authScreenshots, a.err
 }
 
 func TestNewBootstrapLoginRunnerRejectsUnsupportedEngine(t *testing.T) {

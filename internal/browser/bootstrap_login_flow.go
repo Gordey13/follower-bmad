@@ -153,7 +153,7 @@ type playwrightBootstrapAdapter interface {
 	Execute(
 		ctx context.Context,
 		credentials domain.AccountCredentials,
-	) (domain.BootstrapLoginOutcome, []byte, error)
+	) (domain.BootstrapLoginOutcome, []byte, map[string][]byte, error)
 }
 
 type PlaywrightBootstrapLoginRunner struct {
@@ -220,10 +220,11 @@ func (r *PlaywrightBootstrapLoginRunner) RunBootstrapLogin(
 	}
 
 	startedAt := time.Now()
-	outcome, payload, runtimeErr := r.adapter.Execute(ctx, credentials)
+	outcome, payload, authScreenshots, runtimeErr := r.adapter.Execute(ctx, credentials)
 	result := domain.BootstrapLoginResult{
-		Outcome:        outcome,
-		SessionPayload: append([]byte(nil), payload...),
+		Outcome:         outcome,
+		SessionPayload:  append([]byte(nil), payload...),
+		AuthScreenshots: cloneBootstrapScreenshots(authScreenshots),
 		Diagnostics: domain.BootstrapLoginDiagnostics{
 			Engine:     "playwright",
 			DurationMS: time.Since(startedAt).Milliseconds(),
@@ -257,7 +258,7 @@ func (r *PlaywrightBootstrapLoginRunner) RunBootstrapLogin(
 
 type defaultPlaywrightBootstrapAdapter struct{}
 
-func (a *defaultPlaywrightBootstrapAdapter) Execute(
+func (a *defaultPlaywrightBootstrapAdapter) executeLegacy(
 	ctx context.Context,
 	credentials domain.AccountCredentials,
 ) (domain.BootstrapLoginOutcome, []byte, error) {
@@ -371,6 +372,122 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	)
 }
 
+func (a *defaultPlaywrightBootstrapAdapter) Execute(
+	ctx context.Context,
+	credentials domain.AccountCredentials,
+) (domain.BootstrapLoginOutcome, []byte, map[string][]byte, error) {
+	authScreenshots := map[string][]byte{}
+
+	if err := ctx.Err(); err != nil {
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	if err := credentials.Validate(); err != nil {
+		return domain.BootstrapLoginOutcomeAuthInvalidCredentials, nil, authScreenshots, nil
+	}
+
+	playwrightInstance, err := playwright.Run()
+	if err != nil {
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	defer playwrightInstance.Stop()
+
+	browser, err := playwrightInstance.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Headless: playwright.Bool(true),
+	})
+	if err != nil {
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	defer browser.Close()
+
+	browserContext, err := browser.NewContext()
+	if err != nil {
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	defer browserContext.Close()
+
+	page, err := browserContext.NewPage()
+	if err != nil {
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+
+	profileIconSelector := "svg.osk-icon.osk-icon_size-l.osk-header-top-actions__link"
+	emailPasswordLoginSelector := "button:has-text('Войти по email и паролю')"
+	emailInputSelector := "input[placeholder='E-mail']"
+	passwordInputSelector := "input[placeholder='Пароль']"
+	submitSelector := "button:has-text('Войти')"
+
+	if _, err := page.Goto("https://oskelly.ru", playwright.PageGotoOptions{
+		Timeout:   playwright.Float(45000),
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-goto-home-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	captureBootstrapScreenshot(page, authScreenshots, "auth-home")
+
+	if err := page.Click(profileIconSelector, playwright.PageClickOptions{
+		Timeout: playwright.Float(15000),
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-profile-icon-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	captureBootstrapScreenshot(page, authScreenshots, "auth-profile-icon")
+
+	if err := page.Click(emailPasswordLoginSelector, playwright.PageClickOptions{
+		Timeout: playwright.Float(15000),
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-email-password-button-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	captureBootstrapScreenshot(page, authScreenshots, "auth-email-password-form")
+
+	if err := page.Fill(emailInputSelector, credentials.Username); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-email-fill-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	if err := page.Fill(passwordInputSelector, credentials.Password); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-password-fill-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	captureBootstrapScreenshot(page, authScreenshots, "auth-credentials-filled")
+
+	if err := page.Click(submitSelector, playwright.PageClickOptions{
+		Timeout: playwright.Float(15000),
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-submit-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	captureBootstrapScreenshot(page, authScreenshots, "auth-submit")
+
+	time.Sleep(2 * time.Second)
+	if err := page.Click(profileIconSelector, playwright.PageClickOptions{
+		Timeout: playwright.Float(15000),
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-post-submit-profile-open-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	captureBootstrapScreenshot(page, authScreenshots, "auth-post-submit-profile-open")
+
+	if hasAnySelector(page, []string{emailPasswordLoginSelector}) {
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, domain.NewDomainError(
+			domain.ErrorCodeAuthBootstrapFailed,
+			"login form remains available after submit",
+		)
+	}
+
+	storageState, stateErr := browserContext.StorageState()
+	if stateErr != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-storage-state-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stateErr
+	}
+	payload, marshalErr := json.Marshal(storageState)
+	if marshalErr != nil {
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, marshalErr
+	}
+
+	return domain.BootstrapLoginOutcomeSuccess, payload, authScreenshots, nil
+}
+
 func fillFirstSelector(page playwright.Page, selectors []string, value string) error {
 	selector, err := firstExistingSelector(page, selectors)
 	if err != nil {
@@ -421,11 +538,49 @@ func waitAnySelector(page playwright.Page, selectors []string, timeout time.Dura
 }
 
 func isAuthenticatedURL(pageURL string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(pageURL))
-	if normalized == "" {
-		return false
+	return !isAuthenticationRequiredURL(pageURL)
+}
+
+func cloneBootstrapScreenshots(source map[string][]byte) map[string][]byte {
+	if len(source) == 0 {
+		return nil
 	}
-	return !strings.Contains(normalized, "/login")
+
+	cloned := make(map[string][]byte, len(source))
+	for key, payload := range source {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" || len(payload) == 0 {
+			continue
+		}
+		cloned[trimmedKey] = append([]byte(nil), payload...)
+	}
+	if len(cloned) == 0 {
+		return nil
+	}
+	return cloned
+}
+
+func captureBootstrapScreenshot(
+	page playwright.Page,
+	dest map[string][]byte,
+	stage string,
+) {
+	if page == nil || dest == nil {
+		return
+	}
+	trimmedStage := strings.TrimSpace(stage)
+	if trimmedStage == "" {
+		return
+	}
+
+	screenshot, err := page.Screenshot(playwright.PageScreenshotOptions{
+		FullPage: playwright.Bool(true),
+	})
+	if err != nil || len(screenshot) == 0 {
+		return
+	}
+
+	dest[trimmedStage] = append([]byte(nil), screenshot...)
 }
 
 func containsAny(content string, markers []string) bool {

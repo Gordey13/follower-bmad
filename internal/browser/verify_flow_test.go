@@ -119,6 +119,34 @@ func TestPlaywrightVerifyFlowRunnerReturnsVerifyFailedWhenUISignalDoesNotConfirm
 	}
 }
 
+func TestPlaywrightVerifyFlowRunnerReturnsAuthBootstrapRequiredWhenUIRequiresAuth(t *testing.T) {
+	t.Parallel()
+
+	runner := NewPlaywrightVerifyFlowRunner(nil, &stubPlaywrightVerifyAdapter{
+		detection: playwrightVerifyDetection{
+			State:             playwrightVerifyStateAuthRequired,
+			ScreenshotPayload: []byte{0x89, 0x50, 0x4e, 0x47},
+			Reason:            "verify UI requires authentication before follow state can be detected",
+		},
+	})
+	result, err := runner.VerifyFollowResult(
+		context.Background(),
+		testFollowVerificationInput(domain.FollowFlowOutcomeCompleted),
+	)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if result.Verified {
+		t.Fatal("expected verified=false when verify UI requires authentication")
+	}
+	if result.Signal != domain.FollowVerificationSignalVerifyFailed {
+		t.Fatalf("expected signal %s, got %s", domain.FollowVerificationSignalVerifyFailed, result.Signal)
+	}
+	if result.ErrorCode != domain.ErrorCodeAuthBootstrapRequired {
+		t.Fatalf("expected error code %s, got %s", domain.ErrorCodeAuthBootstrapRequired, result.ErrorCode)
+	}
+}
+
 func testFollowVerificationInput(outcome domain.FollowFlowOutcome) domain.FollowVerificationInput {
 	return domain.FollowVerificationInput{
 		TaskID:             uuid.New(),
@@ -214,6 +242,21 @@ func TestPlaywrightVerifyFlowRunnerReturnsErrorWhenAdapterFails(t *testing.T) {
 	)
 	if !domain.IsDomainErrorCode(err, domain.ErrorCodeFollowVerifyFailed) {
 		t.Fatalf("expected %s, got %v", domain.ErrorCodeFollowVerifyFailed, err)
+	}
+}
+
+func TestPlaywrightVerifyFlowRunnerPreservesAuthBootstrapRequiredErrorFromAdapter(t *testing.T) {
+	t.Parallel()
+
+	runner := NewPlaywrightVerifyFlowRunner(nil, &stubPlaywrightVerifyAdapter{
+		err: domain.NewDomainError(domain.ErrorCodeAuthBootstrapRequired, "verify authentication required"),
+	})
+	_, err := runner.VerifyFollowResult(
+		context.Background(),
+		testFollowVerificationInput(domain.FollowFlowOutcomeAlreadyDone),
+	)
+	if !domain.IsDomainErrorCode(err, domain.ErrorCodeAuthBootstrapRequired) {
+		t.Fatalf("expected %s, got %v", domain.ErrorCodeAuthBootstrapRequired, err)
 	}
 }
 

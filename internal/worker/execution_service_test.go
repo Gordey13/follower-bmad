@@ -876,7 +876,9 @@ func TestResolveBootstrapForClaimedTaskSavesSessionAndMarksReadyForFollow(t *tes
 			},
 		},
 		testExecutionLogger(),
-	).WithSessionBootstrapPolicy(SessionBootstrapPolicy{
+	)
+	artifactStore := &mockExecutionArtifactStore{}
+	service = service.WithSessionBootstrapPolicy(SessionBootstrapPolicy{
 		BootstrapLoginEnabled: true,
 	}).WithBootstrapLoginRunner(&mockExecutionBootstrapRunner{
 		runFn: func(ctx context.Context, input domain.BootstrapLoginInput) (domain.BootstrapLoginResult, error) {
@@ -886,13 +888,17 @@ func TestResolveBootstrapForClaimedTaskSavesSessionAndMarksReadyForFollow(t *tes
 			return domain.BootstrapLoginResult{
 				Outcome:        domain.BootstrapLoginOutcomeSuccess,
 				SessionPayload: []byte(`{"cookies":[{"name":"sid","value":"bootstrap"}]}`),
+				AuthScreenshots: map[string][]byte{
+					"auth-home":                     []byte("home"),
+					"auth-post-submit-profile-open": []byte("post-submit"),
+				},
 				Diagnostics: domain.BootstrapLoginDiagnostics{
 					Engine:     "mock",
 					DurationMS: 2,
 				},
 			}, nil
 		},
-	})
+	}).WithArtifactStore(artifactStore)
 
 	resolved, err := service.ResolveBootstrapForClaimedTask(context.Background(), task, prepared)
 	if err != nil {
@@ -909,6 +915,18 @@ func TestResolveBootstrapForClaimedTaskSavesSessionAndMarksReadyForFollow(t *tes
 	}
 	if len(resolved.SessionPayload) == 0 {
 		t.Fatal("expected session payload to be set from bootstrap result")
+	}
+	if artifactStore.saveCount != 2 {
+		t.Fatalf("expected 2 auth screenshots to be persisted, got %d", artifactStore.saveCount)
+	}
+	if !containsString(artifactStore.artifactNames, "bootstrap-auth-home.png") {
+		t.Fatalf("expected artifact bootstrap-auth-home.png, got %#v", artifactStore.artifactNames)
+	}
+	if !containsString(artifactStore.artifactNames, "bootstrap-auth-post-submit-profile-open.png") {
+		t.Fatalf(
+			"expected artifact bootstrap-auth-post-submit-profile-open.png, got %#v",
+			artifactStore.artifactNames,
+		)
 	}
 }
 
@@ -1888,8 +1906,9 @@ func (m *mockExecutionScreenshotStore) Delete(ctx context.Context, objectKey str
 }
 
 type mockExecutionArtifactStore struct {
-	saveCount   int
-	deleteCount int
+	saveCount     int
+	deleteCount   int
+	artifactNames []string
 }
 
 func (m *mockExecutionArtifactStore) Save(
@@ -1901,12 +1920,22 @@ func (m *mockExecutionArtifactStore) Save(
 	payload []byte,
 ) (string, error) {
 	m.saveCount++
+	m.artifactNames = append(m.artifactNames, artifactName)
 	return "accounts/" + accountID.String() + "/tasks/" + taskID.String() + "/attempts/1/artifacts/" + artifactName, nil
 }
 
 func (m *mockExecutionArtifactStore) Delete(ctx context.Context, objectKey string) error {
 	m.deleteCount++
 	return nil
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func testExecutionLogger() *slog.Logger {

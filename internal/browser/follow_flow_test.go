@@ -181,6 +181,24 @@ func TestPlaywrightFollowFlowRunnerRejectsInvalidOskellyTargetProfile(t *testing
 	}
 }
 
+func TestPlaywrightFollowFlowRunnerPreservesAuthBootstrapRequiredError(t *testing.T) {
+	t.Parallel()
+
+	runner := NewPlaywrightFollowFlowRunner(nil, &stubPlaywrightFollowAdapter{
+		followErr: domain.NewDomainError(
+			domain.ErrorCodeAuthBootstrapRequired,
+			"follow flow requires authenticated session",
+		),
+	})
+	_, _, err := runner.RunFollowFlow(
+		context.Background(),
+		testFollowFlowInput("https://oskelly.ru/profile/100004"),
+	)
+	if !domain.IsDomainErrorCode(err, domain.ErrorCodeAuthBootstrapRequired) {
+		t.Fatalf("expected %s, got %v", domain.ErrorCodeAuthBootstrapRequired, err)
+	}
+}
+
 func testFollowFlowInput(target domain.TargetProfileDescriptor) domain.FollowFlowInput {
 	accountID := uuid.New()
 	return domain.FollowFlowInput{

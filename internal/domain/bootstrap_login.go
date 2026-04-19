@@ -131,9 +131,10 @@ type BootstrapLoginDiagnostics struct {
 }
 
 type BootstrapLoginResult struct {
-	Outcome        BootstrapLoginOutcome
-	SessionPayload []byte
-	Diagnostics    BootstrapLoginDiagnostics
+	Outcome         BootstrapLoginOutcome
+	SessionPayload  []byte
+	AuthScreenshots map[string][]byte
+	Diagnostics     BootstrapLoginDiagnostics
 }
 
 func (result BootstrapLoginResult) Validate() error {

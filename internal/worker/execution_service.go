@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -320,6 +321,7 @@ func (s *ExecutionService) ResolveBootstrapForClaimedTask(
 	if err := result.Validate(); err != nil {
 		return PreparedExecutionContext{}, err
 	}
+	s.persistBootstrapAuthScreenshots(ctx, task, result.AuthScreenshots)
 
 	if result.Outcome != domain.BootstrapLoginOutcomeSuccess {
 		errorCode := bootstrapErrorCodeForOutcome(result.Outcome)
@@ -818,6 +820,109 @@ func validateClaimedTaskForPreparation(task domain.Task) error {
 	}
 
 	return nil
+}
+
+func (s *ExecutionService) persistBootstrapAuthScreenshots(
+	ctx context.Context,
+	task domain.Task,
+	screenshots map[string][]byte,
+) {
+	if s.artifactStore == nil || len(screenshots) == 0 {
+		return
+	}
+
+	stages := make([]string, 0, len(screenshots))
+	for stage := range screenshots {
+		if strings.TrimSpace(stage) == "" {
+			continue
+		}
+		stages = append(stages, stage)
+	}
+	sort.Strings(stages)
+
+	for _, stage := range stages {
+		payload := screenshots[stage]
+		if len(payload) == 0 {
+			continue
+		}
+
+		artifactName := bootstrapAuthScreenshotArtifactName(stage)
+		startedAt := time.Now()
+		objectKey, err := s.artifactStore.Save(
+			ctx,
+			task.AccountID,
+			task.ID,
+			task.Attempt,
+			artifactName,
+			payload,
+		)
+		if err != nil {
+			s.logger.Warn(
+				"artifact.save_failed",
+				observability.ErrorLifecycleAttrs(
+					observability.LifecycleContext{
+						Component:  "worker.execution_service",
+						TaskID:     task.ID.String(),
+						AccountID:  task.AccountID.String(),
+						Attempt:    task.Attempt,
+						ErrorCode:  string(domain.ErrorCodeArtifactPersistFailed),
+						DurationMS: time.Since(startedAt).Milliseconds(),
+					},
+					"persist bootstrap auth screenshot failed",
+					"artifact_name", artifactName,
+					"stage", stage,
+				)...,
+			)
+			continue
+		}
+
+		s.logger.Info(
+			observability.EventArtifactSaved,
+			observability.LifecycleAttrs(
+				observability.LifecycleContext{
+					Component:  "worker.execution_service",
+					TaskID:     task.ID.String(),
+					AccountID:  task.AccountID.String(),
+					Attempt:    task.Attempt,
+					ErrorCode:  string(domain.ErrorCodeEligible),
+					DurationMS: time.Since(startedAt).Milliseconds(),
+				},
+				"artifact_type", "bootstrap_auth_screenshot",
+				"artifact_name", artifactName,
+				"stage", stage,
+				"object_key", objectKey,
+			)...,
+		)
+	}
+}
+
+func bootstrapAuthScreenshotArtifactName(stage string) string {
+	normalized := strings.ToLower(strings.TrimSpace(stage))
+	if normalized == "" {
+		return "bootstrap-auth.png"
+	}
+
+	var slugBuilder strings.Builder
+	lastDash := false
+	for _, symbol := range normalized {
+		isAlpha := symbol >= 'a' && symbol <= 'z'
+		isDigit := symbol >= '0' && symbol <= '9'
+		if isAlpha || isDigit {
+			slugBuilder.WriteRune(symbol)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			slugBuilder.WriteRune('-')
+			lastDash = true
+		}
+	}
+
+	slug := strings.Trim(slugBuilder.String(), "-")
+	if slug == "" {
+		return "bootstrap-auth.png"
+	}
+	return "bootstrap-" + slug + ".png"
 }
 
 func (s *ExecutionService) persistFollowArtifacts(

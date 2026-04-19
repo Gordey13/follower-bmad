@@ -11,11 +11,12 @@ import (
 )
 
 type oskellyFollowSelectorRules struct {
-	ReadySignals       []string
-	AlreadyDoneSignals []string
-	FollowControlPaths []string
-	UnavailableSignals []string
-	PostFollowSignals  []string
+	ReadySignals        []string
+	AlreadyDoneSignals  []string
+	FollowControlPaths  []string
+	UnavailableSignals  []string
+	PostFollowSignals   []string
+	AuthRequiredSignals []string
 }
 
 type oskellyFollowTimeoutRules struct {
@@ -74,6 +75,24 @@ var defaultOskellyFollowRules = oskellyFollowRules{
 			"button:has-text('\u041E\u0442\u043F\u0438\u0441\u0430\u0442\u044C\u0441\u044F')",
 			"button:has-text('Following')",
 		},
+		AuthRequiredSignals: []string{
+			"form[action*='/login']",
+			"section.authorization",
+			"section.authorization .login.active",
+			".authorization",
+			".authorization .login.active",
+			"input[type='password']",
+			"input[name='password']",
+			"input[name='email']",
+			"input[name='login']",
+			"input.form_submit[value*='\u0412\u043E\u0439\u0442\u0438']",
+			"button:has-text('\u0412\u043E\u0439\u0442\u0438')",
+			"button:has-text('\u0412\u043E\u0439\u0442\u0438 \u0438\u043B\u0438 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043E\u0432\u0430\u0442\u044C\u0441\u044F')",
+			"button:has-text('Login')",
+			"text=\u0412\u043E\u0439\u0434\u0438\u0442\u0435",
+			"input[type='submit'][value*='\u0412\u043E\u0439\u0442\u0438']",
+			"a[href*='/login']",
+		},
 	},
 	Timeouts: oskellyFollowTimeoutRules{
 		Navigation: 45 * time.Second,
@@ -128,12 +147,25 @@ func normalizePlaywrightFollowError(err error) error {
 			domain.ErrorCodeSessionPayloadInvalid,
 			domain.ErrorCodeFollowActionUnavailable,
 			domain.ErrorCodeFollowTargetUnreachable,
-			domain.ErrorCodeFollowNavigationFailed:
+			domain.ErrorCodeFollowNavigationFailed,
+			domain.ErrorCodeAuthBootstrapRequired:
 			return domainErr
 		}
 	}
 
 	lowered := strings.ToLower(err.Error())
+	if containsAny(lowered, []string{
+		"/login",
+		"authentication required",
+		"authorization required",
+		"unauthorized",
+		"forbidden",
+	}) {
+		return domain.NewDomainError(
+			domain.ErrorCodeAuthBootstrapRequired,
+			"session authentication is required before follow flow",
+		)
+	}
 	if containsAny(lowered, []string{
 		"net::err_name_not_resolved",
 		"net::err_connection",

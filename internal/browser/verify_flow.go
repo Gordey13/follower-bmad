@@ -81,6 +81,7 @@ const (
 	playwrightVerifyStateFollowConfirmed   playwrightVerifyState = "follow_confirmed"
 	playwrightVerifyStateActionUnavailable playwrightVerifyState = "action_unavailable"
 	playwrightVerifyStateTargetUnreachable playwrightVerifyState = "target_unreachable"
+	playwrightVerifyStateAuthRequired      playwrightVerifyState = "auth_required"
 	playwrightVerifyStateUnknown           playwrightVerifyState = "unknown"
 )
 
@@ -156,6 +157,9 @@ func mapPlaywrightVerificationResult(
 	detection playwrightVerifyDetection,
 ) domain.FollowVerificationResult {
 	reason := normalizeVerifyReason(detection.Reason)
+	if detection.State == playwrightVerifyStateAuthRequired {
+		return verifyAuthRequiredResult(reason, detection.ScreenshotPayload)
+	}
 
 	switch input.Outcome {
 	case domain.FollowFlowOutcomeCompleted:
@@ -224,6 +228,17 @@ func mapPlaywrightVerificationResult(
 	}
 }
 
+func verifyAuthRequiredResult(reason string, screenshotPayload []byte) domain.FollowVerificationResult {
+	return domain.FollowVerificationResult{
+		Verified:          false,
+		Signal:            domain.FollowVerificationSignalVerifyFailed,
+		Reason:            reason,
+		ErrorCode:         domain.ErrorCodeAuthBootstrapRequired,
+		SessionChanged:    false,
+		ScreenshotPayload: screenshotPayload,
+	}
+}
+
 func verifyFailedResult(reason string, screenshotPayload []byte) domain.FollowVerificationResult {
 	return domain.FollowVerificationResult{
 		Verified:          false,
@@ -270,7 +285,8 @@ func normalizePlaywrightVerifyError(err error) error {
 		switch domainErr.Code {
 		case domain.ErrorCodeFollowVerifyFailed,
 			domain.ErrorCodeFollowTargetProfile,
-			domain.ErrorCodeSessionPayloadInvalid:
+			domain.ErrorCodeSessionPayloadInvalid,
+			domain.ErrorCodeAuthBootstrapRequired:
 			return domainErr
 		}
 	}

@@ -73,6 +73,13 @@ func (a *defaultPlaywrightVerifyAdapter) InspectFollowState(
 			Reason:            "verify navigation returned unreachable target status",
 		}, nil
 	}
+	if isAuthenticationRequiredPage(page, defaultOskellyVerifyRules.Selectors.AuthRequiredSignals) {
+		return playwrightVerifyDetection{
+			State:             playwrightVerifyStateAuthRequired,
+			ScreenshotPayload: captureVerifyScreenshot(page, "auth-required"),
+			Reason:            "verify UI requires authentication before follow state can be detected",
+		}, nil
+	}
 
 	if !isResolvedOskellyProfileURL(page.URL()) {
 		return playwrightVerifyDetection{
@@ -88,6 +95,13 @@ func (a *defaultPlaywrightVerifyAdapter) InspectFollowState(
 		playwrightVerifyReadySelectors(),
 		defaultOskellyVerifyRules.Timeouts.Readiness,
 	) {
+		if isAuthenticationRequiredPage(page, defaultOskellyVerifyRules.Selectors.AuthRequiredSignals) {
+			return playwrightVerifyDetection{
+				State:             playwrightVerifyStateAuthRequired,
+				ScreenshotPayload: captureVerifyScreenshot(page, "auth-required"),
+				Reason:            "verify UI requires authentication before follow state can be detected",
+			}, nil
+		}
 		return playwrightVerifyDetection{
 			State:             playwrightVerifyStateUnknown,
 			ScreenshotPayload: captureVerifyScreenshot(page, "ready-timeout"),
@@ -102,6 +116,9 @@ func (a *defaultPlaywrightVerifyAdapter) InspectFollowState(
 	}
 
 	switch {
+	case hasAnySelector(page, defaultOskellyVerifyRules.Selectors.AuthRequiredSignals):
+		detection.State = playwrightVerifyStateAuthRequired
+		detection.Reason = "verify UI requires authentication before follow state can be detected"
 	case hasAnySelector(page, defaultOskellyVerifyRules.Selectors.TargetUnreachableSignals):
 		detection.State = playwrightVerifyStateTargetUnreachable
 		detection.Reason = "verify UI indicates target profile is unreachable"
