@@ -105,6 +105,38 @@ func TestRestoreLifecycleContextDefaultsWithoutContext(t *testing.T) {
 	}
 }
 
+func TestAdminLifecycleAttrsIncludeRequiredFields(t *testing.T) {
+	t.Parallel()
+
+	attrs := AdminLifecycleAttrs(AdminLifecycleContext{
+		CorrelationID:   "corr-1",
+		AdminAction:     EventAdminRetryTask,
+		TaskID:          "task-1",
+		OperationResult: "success",
+		ErrorCode:       "none",
+		DurationMS:      9,
+		HTTPRoute:       "/api/v1/tasks/{id}/retry",
+		HTTPStatusCode:  200,
+	})
+
+	values := attrMap(attrs)
+	requiredKeys := []string{
+		"correlation_id",
+		"admin.action",
+		"task_id",
+		"operation.result",
+		"error_code",
+		"duration_ms",
+		"http.route",
+		"http.status_code",
+	}
+	for _, key := range requiredKeys {
+		if _, ok := values[key]; !ok {
+			t.Fatalf("expected key %q in admin lifecycle attrs, got %+v", key, values)
+		}
+	}
+}
+
 func attrMap(attrs []any) map[string]string {
 	mapped := make(map[string]string, len(attrs)/2)
 	for index := 0; index < len(attrs)-1; index += 2 {

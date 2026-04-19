@@ -46,6 +46,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 			runtimeDeps.taskRepository,
 			runtimeDeps.taskRepository,
 			runtimeDeps.resultRepository,
+			httptransport.WithAdminLogger(logger),
 		),
 	)
 

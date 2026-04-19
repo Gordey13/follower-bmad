@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	"follower/internal/audit"
@@ -42,6 +43,10 @@ const (
 	EventArtifactSaved               = "artifact.saved"
 	EventFollowHistoryRead           = "follow.history.read"
 
+	EventAdminCSVImport  = "admin.csv_import"
+	EventAdminRetryTask  = "admin.retry_task"
+	EventAdminCancelTask = "admin.cancel_task"
+
 	FieldComponent         = "component"
 	FieldTaskID            = "task_id"
 	FieldAccountID         = "account_id"
@@ -49,6 +54,11 @@ const (
 	FieldErrorCode         = "error_code"
 	FieldDurationMS        = "duration_ms"
 	FieldDiagnosticMessage = "diagnostic_message"
+	FieldCorrelationID     = "correlation_id"
+	FieldAdminAction       = "admin.action"
+	FieldOperationResult   = "operation.result"
+	FieldHTTPRoute         = "http.route"
+	FieldHTTPStatusCode    = "http.status_code"
 )
 
 type LifecycleContext struct {
@@ -61,10 +71,28 @@ type LifecycleContext struct {
 }
 
 type restoreLifecycleContextKey struct{}
+type adminRequestContextKey struct{}
 
 type RestoreLifecycleContext struct {
 	TaskID  string
 	Attempt int
+}
+
+type AdminLifecycleContext struct {
+	CorrelationID   string
+	AdminAction     string
+	TaskID          string
+	OperationResult string
+	ErrorCode       string
+	DurationMS      int64
+	HTTPRoute       string
+	HTTPStatusCode  int
+}
+
+type AdminRequestContext struct {
+	CorrelationID string
+	AdminAction   string
+	TaskID        string
 }
 
 func WithRestoreLifecycleContext(ctx context.Context, taskID string, attempt int) context.Context {
@@ -98,6 +126,39 @@ func RestoreLifecycleContextFrom(ctx context.Context) RestoreLifecycleContext {
 	return value
 }
 
+func WithAdminRequestContext(
+	ctx context.Context,
+	requestContext AdminRequestContext,
+) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(
+		ctx,
+		adminRequestContextKey{},
+		normalizeAdminRequestContext(requestContext),
+	)
+}
+
+func AdminRequestContextFrom(ctx context.Context) AdminRequestContext {
+	if ctx == nil {
+		return AdminRequestContext{
+			CorrelationID: "n/a",
+			AdminAction:   "admin.unknown",
+			TaskID:        "n/a",
+		}
+	}
+	value, ok := ctx.Value(adminRequestContextKey{}).(AdminRequestContext)
+	if !ok {
+		return AdminRequestContext{
+			CorrelationID: "n/a",
+			AdminAction:   "admin.unknown",
+			TaskID:        "n/a",
+		}
+	}
+	return normalizeAdminRequestContext(value)
+}
+
 func LifecycleAttrs(context LifecycleContext, extras ...any) []any {
 	normalized := normalizeLifecycleContext(context)
 	attrs := []any{
@@ -117,6 +178,24 @@ func LifecycleAttrs(context LifecycleContext, extras ...any) []any {
 func ErrorLifecycleAttrs(context LifecycleContext, diagnosticMessage string, extras ...any) []any {
 	attrs := LifecycleAttrs(context, extras...)
 	return append(attrs, FieldDiagnosticMessage, SanitizeDiagnosticMessage(diagnosticMessage))
+}
+
+func AdminLifecycleAttrs(context AdminLifecycleContext, extras ...any) []any {
+	normalized := normalizeAdminLifecycleContext(context)
+	attrs := []any{
+		FieldCorrelationID, normalized.CorrelationID,
+		FieldAdminAction, normalized.AdminAction,
+		FieldTaskID, normalized.TaskID,
+		FieldOperationResult, normalized.OperationResult,
+		FieldErrorCode, normalized.ErrorCode,
+		FieldDurationMS, normalized.DurationMS,
+		FieldHTTPRoute, normalized.HTTPRoute,
+		FieldHTTPStatusCode, strconv.Itoa(normalized.HTTPStatusCode),
+	}
+	if len(extras) > 0 {
+		attrs = append(attrs, extras...)
+	}
+	return attrs
 }
 
 func SafeStringAttrs(fields map[string]string) []any {
@@ -177,6 +256,77 @@ func normalizeLifecycleContext(context LifecycleContext) LifecycleContext {
 	}
 	if normalized.DurationMS < 0 {
 		normalized.DurationMS = 0
+	}
+
+	return normalized
+}
+
+func normalizeAdminRequestContext(requestContext AdminRequestContext) AdminRequestContext {
+	normalized := requestContext
+
+	normalized.CorrelationID = strings.TrimSpace(normalized.CorrelationID)
+	if normalized.CorrelationID == "" {
+		normalized.CorrelationID = "n/a"
+	}
+
+	normalized.AdminAction = strings.TrimSpace(normalized.AdminAction)
+	if normalized.AdminAction == "" {
+		normalized.AdminAction = "admin.unknown"
+	}
+
+	normalized.TaskID = strings.TrimSpace(normalized.TaskID)
+	if normalized.TaskID == "" {
+		normalized.TaskID = "n/a"
+	}
+
+	return normalized
+}
+
+func normalizeAdminLifecycleContext(context AdminLifecycleContext) AdminLifecycleContext {
+	normalized := context
+
+	normalized.CorrelationID = strings.TrimSpace(normalized.CorrelationID)
+	if normalized.CorrelationID == "" {
+		normalized.CorrelationID = "n/a"
+	}
+
+	normalized.AdminAction = strings.TrimSpace(normalized.AdminAction)
+	if normalized.AdminAction == "" {
+		normalized.AdminAction = "admin.unknown"
+	}
+
+	normalized.TaskID = strings.TrimSpace(normalized.TaskID)
+	if normalized.TaskID == "" {
+		normalized.TaskID = "n/a"
+	}
+
+	normalized.OperationResult = strings.TrimSpace(strings.ToLower(normalized.OperationResult))
+	switch normalized.OperationResult {
+	case "success", "error", "rejected":
+	default:
+		normalized.OperationResult = "error"
+	}
+
+	normalized.ErrorCode = strings.TrimSpace(normalized.ErrorCode)
+	if normalized.ErrorCode == "" {
+		if normalized.OperationResult == "success" {
+			normalized.ErrorCode = "none"
+		} else {
+			normalized.ErrorCode = "internal_error"
+		}
+	}
+
+	if normalized.DurationMS < 0 {
+		normalized.DurationMS = 0
+	}
+
+	normalized.HTTPRoute = strings.TrimSpace(normalized.HTTPRoute)
+	if normalized.HTTPRoute == "" {
+		normalized.HTTPRoute = "n/a"
+	}
+
+	if normalized.HTTPStatusCode < 0 {
+		normalized.HTTPStatusCode = 0
 	}
 
 	return normalized

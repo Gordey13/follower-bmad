@@ -45,6 +45,10 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 		return runTasksList(ctx, args[2:], deps.Client, stdout, stderr)
 	case "get":
 		return runTasksGet(ctx, args[2:], deps.Client, stdout, stderr)
+	case "retry":
+		return runTasksRetry(ctx, args[2:], deps.Client, stdout, stderr)
+	case "cancel":
+		return runTasksCancel(ctx, args[2:], deps.Client, stdout, stderr)
 	case "failures":
 		return runTasksFailures(ctx, args[2:], deps.Client, stdout, stderr)
 	default:
@@ -62,11 +66,11 @@ func runTasksList(
 ) int {
 	mode, remaining, err := parseOutputFlag(args)
 	if err != nil {
-		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error())
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error(), "")
 		return 1
 	}
 	if len(remaining) != 0 {
-		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", "tasks list does not accept positional arguments")
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", "tasks list does not accept positional arguments", "")
 		return 1
 	}
 
@@ -78,7 +82,7 @@ func runTasksList(
 
 	view := mapTaskListView(response)
 	if err := renderTasksList(mode, stdout, view); err != nil {
-		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render tasks list output")
+		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render tasks list output", "")
 		return 1
 	}
 
@@ -94,17 +98,17 @@ func runTasksGet(
 ) int {
 	mode, remaining, err := parseOutputFlag(args)
 	if err != nil {
-		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error())
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error(), "")
 		return 1
 	}
 	if len(remaining) != 1 {
-		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", "tasks get requires exactly one task id")
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", "tasks get requires exactly one task id", "")
 		return 1
 	}
 
 	taskID := strings.TrimSpace(remaining[0])
 	if _, err := uuid.Parse(taskID); err != nil {
-		writeCommandError(mode, stdout, stderr, "TASK_ID_INVALID", "task id must be a valid uuid")
+		writeCommandError(mode, stdout, stderr, "TASK_ID_INVALID", "task id must be a valid uuid", "")
 		return 1
 	}
 
@@ -116,7 +120,7 @@ func runTasksGet(
 
 	view := mapTaskDetailView(response)
 	if err := renderTaskDetail(mode, stdout, view); err != nil {
-		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render task detail output")
+		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render task detail output", "")
 		return 1
 	}
 
@@ -132,11 +136,11 @@ func runTasksFailures(
 ) int {
 	mode, remaining, err := parseOutputFlag(args)
 	if err != nil {
-		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error())
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error(), "")
 		return 1
 	}
 	if len(remaining) != 0 {
-		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", "tasks failures does not accept positional arguments")
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", "tasks failures does not accept positional arguments", "")
 		return 1
 	}
 
@@ -148,7 +152,106 @@ func runTasksFailures(
 
 	view := mapTaskFailuresView(response)
 	if err := renderTaskFailures(mode, stdout, view); err != nil {
-		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render task failures output")
+		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render task failures output", "")
+		return 1
+	}
+
+	return 0
+}
+
+func runTasksRetry(
+	ctx context.Context,
+	args []string,
+	client *adminclient.Client,
+	stdout io.Writer,
+	stderr io.Writer,
+) int {
+	mode, remaining, err := parseOutputFlag(args)
+	if err != nil {
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error(), "")
+		return 1
+	}
+	if len(remaining) != 1 {
+		writeCommandError(
+			mode,
+			stdout,
+			stderr,
+			"CLI_USAGE_ERROR",
+			"tasks retry requires exactly one task id",
+			"",
+		)
+		return 1
+	}
+
+	taskID := strings.TrimSpace(remaining[0])
+	if _, err := uuid.Parse(taskID); err != nil {
+		writeCommandError(mode, stdout, stderr, "TASK_ID_INVALID", "task id must be a valid uuid", "")
+		return 1
+	}
+
+	response, err := client.RetryTask(ctx, taskID)
+	if err != nil {
+		writeNormalizedError(mode, stdout, stderr, err)
+		return 1
+	}
+
+	view := taskActionView{
+		Action:        "retry requested",
+		TaskID:        response.SourceTaskID,
+		NewTaskID:     response.NewTaskID,
+		CorrelationID: response.CorrelationID,
+	}
+	if err := renderTaskAction(mode, stdout, view); err != nil {
+		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render retry output", "")
+		return 1
+	}
+
+	return 0
+}
+
+func runTasksCancel(
+	ctx context.Context,
+	args []string,
+	client *adminclient.Client,
+	stdout io.Writer,
+	stderr io.Writer,
+) int {
+	mode, remaining, err := parseOutputFlag(args)
+	if err != nil {
+		writeCommandError(mode, stdout, stderr, "CLI_USAGE_ERROR", err.Error(), "")
+		return 1
+	}
+	if len(remaining) != 1 {
+		writeCommandError(
+			mode,
+			stdout,
+			stderr,
+			"CLI_USAGE_ERROR",
+			"tasks cancel requires exactly one task id",
+			"",
+		)
+		return 1
+	}
+
+	taskID := strings.TrimSpace(remaining[0])
+	if _, err := uuid.Parse(taskID); err != nil {
+		writeCommandError(mode, stdout, stderr, "TASK_ID_INVALID", "task id must be a valid uuid", "")
+		return 1
+	}
+
+	response, err := client.CancelTask(ctx, taskID)
+	if err != nil {
+		writeNormalizedError(mode, stdout, stderr, err)
+		return 1
+	}
+
+	view := taskActionView{
+		Action:        "cancel requested",
+		TaskID:        response.TaskID,
+		CorrelationID: response.CorrelationID,
+	}
+	if err := renderTaskAction(mode, stdout, view); err != nil {
+		writeCommandError(mode, stdout, stderr, "CLI_RENDER_ERROR", "failed to render cancel output", "")
 		return 1
 	}
 
@@ -240,6 +343,13 @@ type taskFailureItemView struct {
 	FollowOutcome      *string    `json:"follow_outcome"`
 	VerificationSignal *string    `json:"verification_signal"`
 	UpdatedAt          *time.Time `json:"updated_at"`
+}
+
+type taskActionView struct {
+	Action        string `json:"action"`
+	TaskID        string `json:"task_id"`
+	NewTaskID     string `json:"new_task_id,omitempty"`
+	CorrelationID string `json:"-"`
 }
 
 func mapTaskListView(response adminclient.TaskListResponse) tasksListView {
@@ -436,6 +546,30 @@ func renderTaskFailures(mode render.OutputMode, stdout io.Writer, view taskFailu
 	})
 }
 
+func renderTaskAction(mode render.OutputMode, stdout io.Writer, view taskActionView) error {
+	if mode == render.OutputModeJSON {
+		payload := map[string]any{
+			"action":  view.Action,
+			"task_id": view.TaskID,
+		}
+		if strings.TrimSpace(view.NewTaskID) != "" {
+			payload["new_task_id"] = view.NewTaskID
+		}
+		if strings.TrimSpace(view.CorrelationID) != "" {
+			payload["meta"] = map[string]string{
+				"correlation_id": view.CorrelationID,
+			}
+		}
+		return render.WriteJSON(stdout, payload)
+	}
+
+	return render.WriteActionResult(stdout, render.ActionResult{
+		Action:    view.Action,
+		TaskID:    view.TaskID,
+		NewTaskID: view.NewTaskID,
+	})
+}
+
 func normalizeWriters(stdout io.Writer, stderr io.Writer) (io.Writer, io.Writer) {
 	if stdout == nil {
 		stdout = io.Discard
@@ -456,8 +590,8 @@ func writePlainError(stderr io.Writer, code string, message string) {
 }
 
 func writeNormalizedError(mode render.OutputMode, stdout io.Writer, stderr io.Writer, err error) {
-	code, message := normalizeError(err)
-	writeCommandError(mode, stdout, stderr, code, message)
+	info := normalizeError(err)
+	writeCommandError(mode, stdout, stderr, info.Code, info.Message, info.CorrelationID)
 }
 
 func writeCommandError(
@@ -466,6 +600,7 @@ func writeCommandError(
 	stderr io.Writer,
 	code string,
 	message string,
+	correlationID string,
 ) {
 	normalizedCode := strings.TrimSpace(code)
 	if normalizedCode == "" {
@@ -478,11 +613,10 @@ func writeCommandError(
 	}
 
 	if mode == render.OutputModeJSON {
-		_ = render.WriteJSON(stderr, map[string]any{
-			"error": map[string]string{
-				"code":    normalizedCode,
-				"message": normalizedMessage,
-			},
+		_ = render.WriteErrorJSON(stderr, render.ErrorPayload{
+			Code:          normalizedCode,
+			Message:       normalizedMessage,
+			CorrelationID: correlationID,
 		})
 		return
 	}
@@ -491,7 +625,13 @@ func writeCommandError(
 	writePlainError(stderr, normalizedCode, normalizedMessage)
 }
 
-func normalizeError(err error) (string, string) {
+type commandErrorInfo struct {
+	Code          string
+	Message       string
+	CorrelationID string
+}
+
+func normalizeError(err error) commandErrorInfo {
 	var clientErr *adminclient.Error
 	if errors.As(err, &clientErr) {
 		code := strings.TrimSpace(clientErr.Code)
@@ -514,10 +654,25 @@ func normalizeError(err error) (string, string) {
 		if message == "" {
 			message = "command failed"
 		}
-		return code, message
+		switch code {
+		case "RETRY_NOT_ALLOWED":
+			message = "retry is not allowed for the current task status"
+		case "CANCEL_NOT_ALLOWED":
+			message = "cancel is not allowed for the current task status"
+		case "TASK_STATE_CONFLICT":
+			message = "task state conflict"
+		}
+		return commandErrorInfo{
+			Code:          code,
+			Message:       message,
+			CorrelationID: strings.TrimSpace(clientErr.CorrelationID),
+		}
 	}
 
-	return "CLI_ERROR", "command failed"
+	return commandErrorInfo{
+		Code:    "CLI_ERROR",
+		Message: "command failed",
+	}
 }
 
 func derefString(value *string) string {
@@ -545,4 +700,6 @@ func formatOptionalTime(value *time.Time) string {
 const cliUsageText = `usage:
   followerctl tasks list [--output table|json]
   followerctl tasks get <task-id> [--output table|json]
+  followerctl tasks retry <task-id> [--output table|json]
+  followerctl tasks cancel <task-id> [--output table|json]
   followerctl tasks failures [--output table|json]`

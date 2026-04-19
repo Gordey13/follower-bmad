@@ -124,3 +124,29 @@ func TestMapAdminErrorCodeUsesBoundedVocabulary(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteAdminSuccessResponseWithMetaIncludesCorrelationID(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	writeAdminSuccessResponseWithMeta(
+		rec,
+		stdhttp.StatusOK,
+		map[string]any{"task_id": "task-123"},
+		adminMetaEnvelope{CorrelationID: "corr-meta-001"},
+	)
+
+	var envelope struct {
+		Data  map[string]any     `json:"data"`
+		Error *adminErrorPayload `json:"error"`
+		Meta  struct {
+			CorrelationID string `json:"correlation_id"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response body: %v", err)
+	}
+	if envelope.Meta.CorrelationID != "corr-meta-001" {
+		t.Fatalf("expected meta.correlation_id corr-meta-001, got %q", envelope.Meta.CorrelationID)
+	}
+}

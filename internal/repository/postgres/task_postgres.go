@@ -11,6 +11,7 @@ import (
 
 	"follower/internal/audit"
 	"follower/internal/domain"
+	"follower/internal/observability"
 	"follower/internal/repository"
 
 	"github.com/google/uuid"
@@ -1042,13 +1043,17 @@ func appendAdminTransitionAuditLog(
 	transition domain.TaskAdminTransition,
 ) error {
 	actor := audit.ActorFromContext(ctx)
-	diagnosticFields := audit.SanitizeDiagnosticFields(map[string]string{
-		"account_id":   after.AccountID.String(),
-		"admin_action": string(transition.Action),
-		"from_status":  string(transition.FromStatus),
-		"to_status":    string(transition.ToStatus),
-		"attempt":      strconv.Itoa(after.Attempt),
-	})
+	diagnosticFields := adminMutationDiagnosticFields(
+		ctx,
+		adminActionFromTransition(transition.Action),
+		after.ID.String(),
+		map[string]string{
+			"account_id":  after.AccountID.String(),
+			"from_status": string(transition.FromStatus),
+			"to_status":   string(transition.ToStatus),
+			"attempt":     strconv.Itoa(after.Attempt),
+		},
+	)
 	diagnosticJSON, err := json.Marshal(diagnosticFields)
 	if err != nil {
 		return fmt.Errorf("marshal admin transition diagnostic fields: %w", err)
@@ -1105,13 +1110,18 @@ func appendTaskRetryAuditLog(
 	newTask domain.Task,
 ) error {
 	actor := audit.ActorFromContext(ctx)
-	diagnosticFields := audit.SanitizeDiagnosticFields(map[string]string{
-		"account_id":     newTask.AccountID.String(),
-		"source_task_id": sourceTask.ID.String(),
-		"new_task_id":    newTask.ID.String(),
-		"source_status":  string(sourceTask.Status),
-		"new_status":     string(newTask.Status),
-	})
+	diagnosticFields := adminMutationDiagnosticFields(
+		ctx,
+		observability.EventAdminRetryTask,
+		newTask.ID.String(),
+		map[string]string{
+			"account_id":     newTask.AccountID.String(),
+			"source_task_id": sourceTask.ID.String(),
+			"new_task_id":    newTask.ID.String(),
+			"source_status":  string(sourceTask.Status),
+			"new_status":     string(newTask.Status),
+		},
+	)
 	diagnosticJSON, err := json.Marshal(diagnosticFields)
 	if err != nil {
 		return fmt.Errorf("marshal retry diagnostic fields: %w", err)
@@ -1144,4 +1154,37 @@ func appendTaskRetryAuditLog(
 	}
 
 	return nil
+}
+
+func adminMutationDiagnosticFields(
+	ctx context.Context,
+	adminAction string,
+	taskID string,
+	extra map[string]string,
+) map[string]string {
+	requestContext := observability.AdminRequestContextFrom(ctx)
+	fields := map[string]string{
+		"correlation_id":   requestContext.CorrelationID,
+		"admin_action":     strings.TrimSpace(adminAction),
+		"operation_result": "success",
+		"error_code":       "none",
+		"task_id":          strings.TrimSpace(taskID),
+	}
+
+	for key, value := range extra {
+		fields[key] = value
+	}
+
+	return audit.SanitizeDiagnosticFields(fields)
+}
+
+func adminActionFromTransition(action domain.TaskAdminAction) string {
+	switch action {
+	case domain.TaskAdminActionRetry:
+		return observability.EventAdminRetryTask
+	case domain.TaskAdminActionCancel:
+		return observability.EventAdminCancelTask
+	default:
+		return "admin.unknown"
+	}
 }

@@ -20,14 +20,16 @@ func TestTaskLifecycleMetricsExposePrometheusSeries(t *testing.T) {
 	metrics.RecordStarted()
 	metrics.RecordCompleted("success")
 	metrics.RecordCompleted("retry")
+	metrics.RecordCompleted("canceled")
 	metrics.RecordError("claim")
 	metrics.RecordError("complete")
 	metrics.RecordErrorCode("claim", string(domain.ErrorCodeInternal))
 	metrics.RecordExecutionOutcome("follow_completed")
 	metrics.RecordDependencyReady("postgres", true)
 	metrics.SetTaskQueueSnapshot(map[domain.TaskStatus]int64{
-		domain.TaskStatusQueued:  2,
-		domain.TaskStatusRunning: 1,
+		domain.TaskStatusQueued:   2,
+		domain.TaskStatusRunning:  1,
+		domain.TaskStatusCanceled: 3,
 	})
 	metrics.SetAccountOperationalSnapshot(map[domain.AccountOperationalState]int64{
 		domain.AccountStateActive: 3,
@@ -76,6 +78,14 @@ func TestTaskLifecycleMetricsExposePrometheusSeries(t *testing.T) {
 	}
 	if !strings.Contains(joined, "follower_session_status_total") {
 		t.Fatalf("expected follower_session_status_total in gathered metrics, got: %s", joined)
+	}
+	if value := gaugeValueByLabels(
+		t,
+		families,
+		"follower_task_queue_total",
+		map[string]string{"status": string(domain.TaskStatusCanceled)},
+	); value != 3 {
+		t.Fatalf("expected canceled queue snapshot=3, got %v", value)
 	}
 }
 

@@ -61,6 +61,20 @@ type TaskFailureItem struct {
 	VerificationSignal *string   `json:"verification_signal"`
 }
 
+type TaskRetryResponse struct {
+	SourceTaskID  string `json:"source_task_id"`
+	NewTaskID     string `json:"new_task_id"`
+	Status        string `json:"status"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+}
+
+type TaskCancelResponse struct {
+	TaskID        string `json:"task_id"`
+	Status        string `json:"status"`
+	ResultReason  string `json:"result_reason"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+}
+
 type ErrorKind string
 
 const (
@@ -71,11 +85,12 @@ const (
 )
 
 type Error struct {
-	Kind       ErrorKind
-	Code       string
-	Message    string
-	StatusCode int
-	Cause      error
+	Kind          ErrorKind
+	Code          string
+	Message       string
+	StatusCode    int
+	CorrelationID string
+	Cause         error
 }
 
 func (e *Error) Error() string {

@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"follower/internal/audit"
 	"follower/internal/domain"
+	"follower/internal/observability"
 	"follower/internal/repository"
 	postgresrepo "follower/internal/repository/postgres"
 
@@ -885,6 +887,11 @@ func TestTaskRepositoryApplyAdminTransitionCancelCommitsStateAndAuditAtomically(
 		Type: audit.ActorTypeAdminOperator,
 		ID:   "admin-cancel-01",
 	})
+	ctx = observability.WithAdminRequestContext(ctx, observability.AdminRequestContext{
+		CorrelationID: "corr-admin-cancel-01",
+		AdminAction:   observability.EventAdminCancelTask,
+		TaskID:        taskID.String(),
+	})
 	const cancelReason = "admin canceled before worker claim"
 	updated, err := repository.CancelTask(ctx, taskID, cancelReason)
 	if err != nil {
@@ -928,6 +935,44 @@ func TestTaskRepositoryApplyAdminTransitionCancelCommitsStateAndAuditAtomically(
 	}
 	if auditCount != 1 {
 		t.Fatalf("expected exactly 1 task.canceled audit row, got %d", auditCount)
+	}
+
+	var actorType string
+	var actorID string
+	var diagnosticRaw []byte
+	if err := pool.QueryRow(context.Background(), `
+		SELECT actor_type, actor_id, diagnostic_fields
+		FROM audit_logs
+		WHERE target_type = 'task'
+		  AND target_id = $1
+		  AND action = 'task.canceled'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, taskID.String()).Scan(&actorType, &actorID, &diagnosticRaw); err != nil {
+		t.Fatalf("select audit row: %v", err)
+	}
+	if actorType != string(audit.ActorTypeAdminOperator) {
+		t.Fatalf("expected actor_type=%q, got %q", audit.ActorTypeAdminOperator, actorType)
+	}
+	if actorID != "admin-cancel-01" {
+		t.Fatalf("expected actor_id=admin-cancel-01, got %q", actorID)
+	}
+
+	var diagnostics map[string]string
+	if err := json.Unmarshal(diagnosticRaw, &diagnostics); err != nil {
+		t.Fatalf("unmarshal diagnostic_fields: %v", err)
+	}
+	if diagnostics["correlation_id"] != "corr-admin-cancel-01" {
+		t.Fatalf("expected correlation_id corr-admin-cancel-01, got %q", diagnostics["correlation_id"])
+	}
+	if diagnostics["admin_action"] != string(observability.EventAdminCancelTask) {
+		t.Fatalf("expected admin_action=%q, got %q", observability.EventAdminCancelTask, diagnostics["admin_action"])
+	}
+	if diagnostics["operation_result"] != "success" {
+		t.Fatalf("expected operation_result=success, got %q", diagnostics["operation_result"])
+	}
+	if diagnostics["error_code"] != "none" {
+		t.Fatalf("expected error_code=none, got %q", diagnostics["error_code"])
 	}
 }
 
@@ -1035,6 +1080,156 @@ func TestTaskRepositoryApplyAdminTransitionCancelVsClaimRaceHasSingleWinner(t *t
 	}
 	if got.Status != domain.TaskStatusCanceled && got.Status != domain.TaskStatusRunning {
 		t.Fatalf("expected final status canceled or running, got %s", got.Status)
+	}
+}
+
+func TestTaskRepositoryCancelTaskRejectsNonQueuedStatuses(t *testing.T) {
+	pool := mustOpenTestPool(t)
+	prepareAuditLogsSchema(t, pool)
+	prepareTaskSchemaForCanceledLifecycle(t, pool)
+	repository := postgresrepo.NewTaskRepository(pool)
+
+	createTaskInStatus := func(t *testing.T, status domain.TaskStatus) uuid.UUID {
+		t.Helper()
+
+		accountID := createTestAccount(t, pool, "task-cancel-denied-"+string(status)+"-"+uuid.NewString())
+		taskID := uuid.New()
+		if _, err := repository.Enqueue(context.Background(), domain.Task{
+			ID:            taskID,
+			AccountID:     accountID,
+			TargetProfile: domain.TargetProfileDescriptor("target-profile-cancel-denied-" + string(status)),
+			Status:        domain.TaskStatusQueued,
+		}); err != nil {
+			t.Fatalf("Enqueue() error = %v", err)
+		}
+
+		switch status {
+		case domain.TaskStatusQueued:
+			return taskID
+		case domain.TaskStatusRunning:
+			if _, ok, err := repository.ClaimNextQueued(context.Background(), "worker-cancel-denied-running-"+taskID.String()); err != nil || !ok {
+				t.Fatalf("ClaimNextQueued(running) expected success, got ok=%v err=%v", ok, err)
+			}
+		case domain.TaskStatusSuccess:
+			if _, ok, err := repository.ClaimNextQueued(context.Background(), "worker-cancel-denied-success-"+taskID.String()); err != nil || !ok {
+				t.Fatalf("ClaimNextQueued(success) expected success, got ok=%v err=%v", ok, err)
+			}
+			if _, err := repository.Complete(context.Background(), taskID, "worker-cancel-denied-success-"+taskID.String(), domain.TaskStatusSuccess, "", ""); err != nil {
+				t.Fatalf("Complete(success) error = %v", err)
+			}
+		case domain.TaskStatusRetry:
+			if _, ok, err := repository.ClaimNextQueued(context.Background(), "worker-cancel-denied-retry-"+taskID.String()); err != nil || !ok {
+				t.Fatalf("ClaimNextQueued(retry) expected success, got ok=%v err=%v", ok, err)
+			}
+			if _, err := repository.Complete(context.Background(), taskID, "worker-cancel-denied-retry-"+taskID.String(), domain.TaskStatusRetry, domain.ErrorCodeInternal, "retry reason"); err != nil {
+				t.Fatalf("Complete(retry) error = %v", err)
+			}
+		case domain.TaskStatusFail:
+			if _, ok, err := repository.ClaimNextQueued(context.Background(), "worker-cancel-denied-fail-"+taskID.String()); err != nil || !ok {
+				t.Fatalf("ClaimNextQueued(fail) expected success, got ok=%v err=%v", ok, err)
+			}
+			if _, err := repository.Complete(context.Background(), taskID, "worker-cancel-denied-fail-"+taskID.String(), domain.TaskStatusFail, domain.ErrorCodeFollowTargetUnreachable, "fail reason"); err != nil {
+				t.Fatalf("Complete(fail) error = %v", err)
+			}
+		case domain.TaskStatusCanceled:
+			if _, err := repository.CancelTask(context.Background(), taskID, "already canceled"); err != nil {
+				t.Fatalf("CancelTask(initial canceled) error = %v", err)
+			}
+		default:
+			t.Fatalf("unsupported status %s", status)
+		}
+
+		return taskID
+	}
+
+	tests := []struct {
+		name   string
+		status domain.TaskStatus
+	}{
+		{name: "running", status: domain.TaskStatusRunning},
+		{name: "success", status: domain.TaskStatusSuccess},
+		{name: "retry", status: domain.TaskStatusRetry},
+		{name: "fail", status: domain.TaskStatusFail},
+		{name: "canceled", status: domain.TaskStatusCanceled},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			taskID := createTaskInStatus(t, tc.status)
+			_, err := repository.CancelTask(context.Background(), taskID, "cancel should be denied")
+			if !domain.IsDomainErrorCode(err, domain.ErrorCodeCancelNotAllowed) {
+				t.Fatalf("expected %s, got %v", domain.ErrorCodeCancelNotAllowed, err)
+			}
+		})
+	}
+}
+
+func TestTaskRepositoryCancelTaskCancelVsCancelRaceHasSingleWinner(t *testing.T) {
+	pool := mustOpenTestPool(t)
+	prepareAuditLogsSchema(t, pool)
+	prepareTaskSchemaForCanceledLifecycle(t, pool)
+	repository := postgresrepo.NewTaskRepository(pool)
+
+	accountID := createTestAccount(t, pool, "task-admin-race-cancel-cancel-01")
+	taskID := uuid.New()
+	if _, err := repository.Enqueue(context.Background(), domain.Task{
+		ID:            taskID,
+		AccountID:     accountID,
+		TargetProfile: "target-profile-race-cancel-cancel",
+		Status:        domain.TaskStatusQueued,
+	}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, 2)
+	reasons := []string{"race cancel #1", "race cancel #2"}
+
+	for idx := 0; idx < 2; idx++ {
+		idx := idx
+		go func() {
+			<-start
+			ctx := audit.WithActor(context.Background(), audit.Actor{
+				Type: audit.ActorTypeAdminOperator,
+				ID:   "admin-race-cancel-cancel-" + uuid.NewString(),
+			})
+			_, err := repository.CancelTask(ctx, taskID, reasons[idx])
+			errCh <- err
+		}()
+	}
+
+	close(start)
+	firstErr := <-errCh
+	secondErr := <-errCh
+
+	successCount := 0
+	conflictCount := 0
+	for _, err := range []error{firstErr, secondErr} {
+		if err == nil {
+			successCount++
+			continue
+		}
+		if domain.IsDomainErrorCode(err, domain.ErrorCodeCancelNotAllowed) {
+			conflictCount++
+			continue
+		}
+		t.Fatalf("unexpected cancel race error: %v", err)
+	}
+
+	if successCount != 1 || conflictCount != 1 {
+		t.Fatalf("expected one success and one cancel conflict, got success=%d conflict=%d", successCount, conflictCount)
+	}
+
+	got, err := repository.GetByID(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("GetByID() error = %v", err)
+	}
+	if got.Status != domain.TaskStatusCanceled {
+		t.Fatalf("expected final status %s, got %s", domain.TaskStatusCanceled, got.Status)
+	}
+	if got.ResultReason != reasons[0] && got.ResultReason != reasons[1] {
+		t.Fatalf("expected result_reason to match race winner, got %q", got.ResultReason)
 	}
 }
 
@@ -1486,7 +1681,7 @@ func prepareTaskSchemaForCanceledLifecycle(t *testing.T, pool *pgxpool.Pool) {
 					AND started_at IS NULL
 					AND finished_at IS NOT NULL
 					AND error_code IS NULL
-					AND result_reason IS NULL
+					AND NULLIF(BTRIM(result_reason), '') IS NOT NULL
 				)
 			);
 	`)

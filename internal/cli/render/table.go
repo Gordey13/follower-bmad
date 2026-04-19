@@ -36,6 +36,12 @@ type Table struct {
 	Rows    [][]string
 }
 
+type ActionResult struct {
+	Action    string
+	TaskID    string
+	NewTaskID string
+}
+
 func WriteTable(w io.Writer, table Table) error {
 	if len(table.Headers) == 0 {
 		return errors.New("table headers are required")
@@ -61,4 +67,24 @@ func WriteTable(w io.Writer, table Table) error {
 	}
 
 	return tw.Flush()
+}
+
+func WriteActionResult(w io.Writer, result ActionResult) error {
+	action := strings.TrimSpace(result.Action)
+	if action == "" {
+		return errors.New("action is required")
+	}
+
+	parts := []string{action}
+	taskID := strings.TrimSpace(result.TaskID)
+	if taskID != "" {
+		parts = append(parts, "task_id="+taskID)
+	}
+	newTaskID := strings.TrimSpace(result.NewTaskID)
+	if newTaskID != "" {
+		parts = append(parts, "new_task_id="+newTaskID)
+	}
+
+	_, err := fmt.Fprintln(w, strings.Join(parts, " "))
+	return err
 }

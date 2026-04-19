@@ -203,6 +203,7 @@ var taskSnapshotStatuses = []domain.TaskStatus{
 	domain.TaskStatusSuccess,
 	domain.TaskStatusRetry,
 	domain.TaskStatusFail,
+	domain.TaskStatusCanceled,
 }
 
 var accountSnapshotStates = []domain.AccountOperationalState{
@@ -225,6 +226,7 @@ var allowedTaskStatuses = setOf(
 	string(domain.TaskStatusSuccess),
 	string(domain.TaskStatusRetry),
 	string(domain.TaskStatusFail),
+	string(domain.TaskStatusCanceled),
 	"unknown",
 )
 

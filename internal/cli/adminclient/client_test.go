@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -126,4 +128,195 @@ func TestClientListFailuresHandlesMalformedEnvelope(t *testing.T) {
 	if clientErr.Kind != ErrorKindProtocol {
 		t.Fatalf("expected kind=%q, got %q", ErrorKindProtocol, clientErr.Kind)
 	}
+}
+
+func TestClientRetryTaskParsesSuccessEnvelopeAndMeta(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/tasks/task-1/retry" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"source_task_id": "task-1",
+				"new_task_id":    "task-2",
+				"status":         "queued",
+			},
+			"error": nil,
+			"meta": map[string]any{
+				"correlation_id": "corr-retry-001",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	resp, err := client.RetryTask(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("RetryTask() error = %v", err)
+	}
+	if resp.SourceTaskID != "task-1" {
+		t.Fatalf("expected source_task_id=task-1, got %q", resp.SourceTaskID)
+	}
+	if resp.NewTaskID != "task-2" {
+		t.Fatalf("expected new_task_id=task-2, got %q", resp.NewTaskID)
+	}
+	if resp.CorrelationID != "corr-retry-001" {
+		t.Fatalf("expected correlation_id=corr-retry-001, got %q", resp.CorrelationID)
+	}
+}
+
+func TestClientCancelTaskMapsEnvelopeAPIErrorAndMeta(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/tasks/task-1/cancel" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": nil,
+			"error": map[string]any{
+				"code":    "CANCEL_NOT_ALLOWED",
+				"message": "cancel is not allowed for the current task status",
+			},
+			"meta": map[string]any{
+				"correlation_id": "corr-cancel-001",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = client.CancelTask(context.Background(), "task-1")
+	if err == nil {
+		t.Fatal("expected API error, got nil")
+	}
+
+	var clientErr *Error
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if clientErr.Kind != ErrorKindAPI {
+		t.Fatalf("expected kind=%q, got %q", ErrorKindAPI, clientErr.Kind)
+	}
+	if clientErr.Code != "CANCEL_NOT_ALLOWED" {
+		t.Fatalf("expected code CANCEL_NOT_ALLOWED, got %q", clientErr.Code)
+	}
+	if clientErr.CorrelationID != "corr-cancel-001" {
+		t.Fatalf("expected correlation_id corr-cancel-001, got %q", clientErr.CorrelationID)
+	}
+}
+
+func TestClientRetryTaskHandlesMalformedBody(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "not-json")
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = client.RetryTask(context.Background(), "task-1")
+	if err == nil {
+		t.Fatal("expected protocol error, got nil")
+	}
+
+	var clientErr *Error
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if clientErr.Kind != ErrorKindProtocol {
+		t.Fatalf("expected kind=%q, got %q", ErrorKindProtocol, clientErr.Kind)
+	}
+}
+
+func TestClientRetryTaskHandlesNon2xxWithoutAPIErrorPayload(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"status": "ignored",
+			},
+			"error": nil,
+			"meta":  map[string]any{},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = client.RetryTask(context.Background(), "task-1")
+	if err == nil {
+		t.Fatal("expected API error, got nil")
+	}
+
+	var clientErr *Error
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if clientErr.Kind != ErrorKindAPI {
+		t.Fatalf("expected kind=%q, got %q", ErrorKindAPI, clientErr.Kind)
+	}
+	if clientErr.Code != "HTTP_502" {
+		t.Fatalf("expected code HTTP_502, got %q", clientErr.Code)
+	}
+}
+
+func TestClientCancelTaskHandlesNetworkFailure(t *testing.T) {
+	t.Parallel()
+
+	client, err := New(
+		"http://example.invalid",
+		&http.Client{
+			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, &net.OpError{Op: "dial", Err: errors.New("dial timeout")}
+			}),
+		},
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = client.CancelTask(context.Background(), "task-1")
+	if err == nil {
+		t.Fatal("expected network error, got nil")
+	}
+
+	var clientErr *Error
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if clientErr.Kind != ErrorKindNetwork {
+		t.Fatalf("expected kind=%q, got %q", ErrorKindNetwork, clientErr.Kind)
+	}
+	if clientErr.Code != "NETWORK_ERROR" {
+		t.Fatalf("expected code NETWORK_ERROR, got %q", clientErr.Code)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

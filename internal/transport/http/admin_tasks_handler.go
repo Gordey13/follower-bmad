@@ -2,10 +2,13 @@ package httptransport
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	stdhttp "net/http"
 	"strings"
 
 	"follower/internal/domain"
+	"follower/internal/observability"
 	"follower/internal/repository"
 
 	"github.com/google/uuid"
@@ -48,12 +51,30 @@ type adminTasksHandler struct {
 	retrier        adminTaskRetrier
 	canceler       adminTaskCanceler
 	resultReader   adminResultReader
+	logger         *slog.Logger
+	instrumenter   *observability.AdminInstrumentation
+}
+
+type AdminTasksHandlerOption func(*adminTasksHandler)
+
+func WithAdminLogger(logger *slog.Logger) AdminTasksHandlerOption {
+	return func(handler *adminTasksHandler) {
+		if handler == nil {
+			return
+		}
+		if logger == nil {
+			return
+		}
+		handler.logger = logger
+		handler.instrumenter = observability.NewAdminInstrumentation(logger)
+	}
 }
 
 func NewAdminTasksHandler(
 	queueWriter adminCSVQueueWriter,
 	taskReader adminTaskReader,
 	resultReader adminResultReader,
+	options ...AdminTasksHandlerOption,
 ) stdhttp.Handler {
 	var failuresReader adminTaskFailuresReader
 	var retrier adminTaskRetrier
@@ -76,6 +97,13 @@ func NewAdminTasksHandler(
 		retrier:        retrier,
 		canceler:       canceler,
 		resultReader:   resultReader,
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	handler.instrumenter = observability.NewAdminInstrumentation(handler.logger)
+	for _, option := range options {
+		if option != nil {
+			option(&handler)
+		}
 	}
 	mux := stdhttp.NewServeMux()
 	mux.HandleFunc("GET /tasks", handler.listTasks)
@@ -151,121 +179,183 @@ func (handler adminTasksHandler) getTask(w stdhttp.ResponseWriter, r *stdhttp.Re
 }
 
 func (handler adminTasksHandler) retryTask(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	taskID, ok := parseAdminTaskID(w, r)
-	if !ok {
-		return
+	const route = "/api/v1/tasks/{id}/retry"
+	taskIDRaw := strings.TrimSpace(r.PathValue("id"))
+	taskIDForContext := "n/a"
+	if parsedTaskID, parseErr := uuid.Parse(taskIDRaw); parseErr == nil {
+		taskIDForContext = parsedTaskID.String()
 	}
-	if handler.retrier == nil {
-		writeAdminEndpointNotAvailable(w, "POST /api/v1/tasks/{id}/retry")
+
+	ctx, meta := prepareAdminMutationContext(r, taskIDForContext, observability.EventAdminRetryTask)
+	ctx, span := handler.instrumenter.Start(
+		ctx,
+		observability.EventAdminRetryTask,
+		taskIDForContext,
+		route,
+	)
+
+	taskID, err := uuid.Parse(taskIDRaw)
+	if err != nil {
+		span.End(stdhttp.StatusBadRequest, "error", string(AdminErrorCodeTaskIDInvalid))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusBadRequest, adminErrorPayload{
+			Code:    string(AdminErrorCodeTaskIDInvalid),
+			Message: "task id must be a valid uuid",
+		}, meta)
 		return
 	}
 
-	retriedTask, err := handler.retrier.RetryFromTask(r.Context(), taskID)
+	if handler.retrier == nil {
+		span.End(stdhttp.StatusServiceUnavailable, "error", string(AdminErrorCodeEndpointTemporarilyClosed))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusServiceUnavailable, adminErrorPayload{
+			Code:    string(AdminErrorCodeEndpointTemporarilyClosed),
+			Message: "admin endpoint is temporarily unavailable",
+			Details: map[string]any{
+				"endpoint": "POST /api/v1/tasks/{id}/retry",
+			},
+		}, meta)
+		return
+	}
+
+	retriedTask, err := handler.retrier.RetryFromTask(ctx, taskID)
 	if err != nil {
 		switch {
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeTaskNotFound):
-			writeAdminErrorResponse(w, stdhttp.StatusNotFound, adminErrorPayload{
+			span.End(stdhttp.StatusNotFound, "error", string(AdminErrorCodeTaskNotFound))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusNotFound, adminErrorPayload{
 				Code:    string(AdminErrorCodeTaskNotFound),
 				Message: "task not found",
 				Details: map[string]any{
 					"task_id": taskID.String(),
 				},
-			})
+			}, meta)
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeRetryNotAllowed):
-			writeAdminErrorResponse(w, stdhttp.StatusConflict, adminErrorPayload{
+			span.End(stdhttp.StatusConflict, "error", string(AdminErrorCodeRetryNotAllowed))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusConflict, adminErrorPayload{
 				Code:    string(AdminErrorCodeRetryNotAllowed),
 				Message: "retry is not allowed for the current task status",
-			})
+			}, meta)
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeTaskStateConflict),
 			domain.IsDomainErrorCode(err, domain.ErrorCodeInvalidTaskTransition):
-			writeAdminErrorResponse(w, stdhttp.StatusConflict, adminErrorPayload{
+			span.End(stdhttp.StatusConflict, "error", string(AdminErrorCodeTaskStateConflict))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusConflict, adminErrorPayload{
 				Code:    string(AdminErrorCodeTaskStateConflict),
 				Message: "task state conflict",
-			})
+			}, meta)
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeInvalidTaskIdentifier):
-			writeAdminErrorResponse(w, stdhttp.StatusBadRequest, adminErrorPayload{
+			span.End(stdhttp.StatusBadRequest, "error", string(AdminErrorCodeTaskIDInvalid))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusBadRequest, adminErrorPayload{
 				Code:    string(AdminErrorCodeTaskIDInvalid),
 				Message: "task id must be a valid uuid",
-			})
+			}, meta)
 		default:
-			writeAdminErrorResponse(w, stdhttp.StatusInternalServerError, adminErrorPayload{
+			span.End(stdhttp.StatusInternalServerError, "error", string(AdminErrorCodeInternalAdminAPIError))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusInternalServerError, adminErrorPayload{
 				Code:    string(AdminErrorCodeInternalAdminAPIError),
 				Message: "failed to retry task",
-			})
+			}, meta)
 		}
 		return
 	}
 
 	response := adminTaskRetryResponse{
-		SourceTaskID: taskID.String(),
-		NewTaskID:    retriedTask.ID.String(),
-		Status:       string(retriedTask.Status),
-	}
-	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
-	if correlationID != "" {
-		response.CorrelationID = &correlationID
+		SourceTaskID:  taskID.String(),
+		NewTaskID:     retriedTask.ID.String(),
+		Status:        string(retriedTask.Status),
+		CorrelationID: &meta.CorrelationID,
 	}
 
-	writeAdminSuccessResponse(w, stdhttp.StatusOK, response)
+	span.End(stdhttp.StatusOK, "success", "none")
+	writeAdminSuccessResponseWithMeta(w, stdhttp.StatusOK, response, meta)
 }
 
 func (handler adminTasksHandler) cancelTask(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	taskID, ok := parseAdminTaskID(w, r)
-	if !ok {
-		return
+	const route = "/api/v1/tasks/{id}/cancel"
+	taskIDRaw := strings.TrimSpace(r.PathValue("id"))
+	taskIDForContext := "n/a"
+	if parsedTaskID, parseErr := uuid.Parse(taskIDRaw); parseErr == nil {
+		taskIDForContext = parsedTaskID.String()
 	}
-	if handler.canceler == nil {
-		writeAdminEndpointNotAvailable(w, "POST /api/v1/tasks/{id}/cancel")
+
+	ctx, meta := prepareAdminMutationContext(r, taskIDForContext, observability.EventAdminCancelTask)
+	ctx, span := handler.instrumenter.Start(
+		ctx,
+		observability.EventAdminCancelTask,
+		taskIDForContext,
+		route,
+	)
+
+	taskID, err := uuid.Parse(taskIDRaw)
+	if err != nil {
+		span.End(stdhttp.StatusBadRequest, "error", string(AdminErrorCodeTaskIDInvalid))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusBadRequest, adminErrorPayload{
+			Code:    string(AdminErrorCodeTaskIDInvalid),
+			Message: "task id must be a valid uuid",
+		}, meta)
 		return
 	}
 
-	canceledTask, err := handler.canceler.CancelTask(r.Context(), taskID, "")
+	if handler.canceler == nil {
+		span.End(stdhttp.StatusServiceUnavailable, "error", string(AdminErrorCodeEndpointTemporarilyClosed))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusServiceUnavailable, adminErrorPayload{
+			Code:    string(AdminErrorCodeEndpointTemporarilyClosed),
+			Message: "admin endpoint is temporarily unavailable",
+			Details: map[string]any{
+				"endpoint": "POST /api/v1/tasks/{id}/cancel",
+			},
+		}, meta)
+		return
+	}
+
+	canceledTask, err := handler.canceler.CancelTask(ctx, taskID, "")
 	if err != nil {
 		switch {
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeTaskNotFound):
-			writeAdminErrorResponse(w, stdhttp.StatusNotFound, adminErrorPayload{
+			span.End(stdhttp.StatusNotFound, "error", string(AdminErrorCodeTaskNotFound))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusNotFound, adminErrorPayload{
 				Code:    string(AdminErrorCodeTaskNotFound),
 				Message: "task not found",
 				Details: map[string]any{
 					"task_id": taskID.String(),
 				},
-			})
+			}, meta)
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeCancelNotAllowed):
-			writeAdminErrorResponse(w, stdhttp.StatusConflict, adminErrorPayload{
+			span.End(stdhttp.StatusConflict, "error", string(AdminErrorCodeCancelNotAllowed))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusConflict, adminErrorPayload{
 				Code:    string(AdminErrorCodeCancelNotAllowed),
 				Message: "cancel is not allowed for the current task status",
-			})
+			}, meta)
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeTaskStateConflict),
 			domain.IsDomainErrorCode(err, domain.ErrorCodeInvalidTaskTransition):
-			writeAdminErrorResponse(w, stdhttp.StatusConflict, adminErrorPayload{
+			span.End(stdhttp.StatusConflict, "error", string(AdminErrorCodeTaskStateConflict))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusConflict, adminErrorPayload{
 				Code:    string(AdminErrorCodeTaskStateConflict),
 				Message: "task state conflict",
-			})
+			}, meta)
 		case domain.IsDomainErrorCode(err, domain.ErrorCodeInvalidTaskIdentifier):
-			writeAdminErrorResponse(w, stdhttp.StatusBadRequest, adminErrorPayload{
+			span.End(stdhttp.StatusBadRequest, "error", string(AdminErrorCodeTaskIDInvalid))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusBadRequest, adminErrorPayload{
 				Code:    string(AdminErrorCodeTaskIDInvalid),
 				Message: "task id must be a valid uuid",
-			})
+			}, meta)
 		default:
-			writeAdminErrorResponse(w, stdhttp.StatusInternalServerError, adminErrorPayload{
+			span.End(stdhttp.StatusInternalServerError, "error", string(AdminErrorCodeInternalAdminAPIError))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusInternalServerError, adminErrorPayload{
 				Code:    string(AdminErrorCodeInternalAdminAPIError),
 				Message: "failed to cancel task",
-			})
+			}, meta)
 		}
 		return
 	}
 
 	response := adminTaskCancelResponse{
-		TaskID:       canceledTask.ID.String(),
-		Status:       string(canceledTask.Status),
-		ResultReason: strings.TrimSpace(canceledTask.ResultReason),
-	}
-	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
-	if correlationID != "" {
-		response.CorrelationID = &correlationID
+		TaskID:        canceledTask.ID.String(),
+		Status:        string(canceledTask.Status),
+		ResultReason:  strings.TrimSpace(canceledTask.ResultReason),
+		CorrelationID: &meta.CorrelationID,
 	}
 
-	writeAdminSuccessResponse(w, stdhttp.StatusOK, response)
+	span.End(stdhttp.StatusOK, "success", "none")
+	writeAdminSuccessResponseWithMeta(w, stdhttp.StatusOK, response, meta)
 }
 
 func (handler adminTasksHandler) listFailures(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -319,6 +409,10 @@ func (handler adminTasksHandler) listFailures(w stdhttp.ResponseWriter, r *stdht
 }
 
 func (handler adminTasksHandler) importCSV(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	const route = "/api/v1/tasks:csv"
+	ctx, meta := prepareAdminMutationContext(r, "n/a", observability.EventAdminCSVImport)
+	ctx, span := handler.instrumenter.Start(ctx, observability.EventAdminCSVImport, "n/a", route)
+
 	validator := newAdminCSVValidator()
 	result, err := validator.Validate(r.Body)
 	if err != nil {
@@ -329,37 +423,41 @@ func (handler adminTasksHandler) importCSV(w stdhttp.ResponseWriter, r *stdhttp.
 			details["rows_valid"] = 0
 			details["rows_invalid"] = 0
 
-			writeAdminErrorResponse(w, stdhttp.StatusBadRequest, adminErrorPayload{
+			span.End(stdhttp.StatusBadRequest, "error", string(AdminErrorCodeCSVSchemaInvalid))
+			writeAdminErrorResponseWithMeta(w, stdhttp.StatusBadRequest, adminErrorPayload{
 				Code:    string(AdminErrorCodeCSVSchemaInvalid),
 				Message: schemaErr.Error(),
 				Details: details,
-			})
+			}, meta)
 			return
 		}
 
-		writeAdminErrorResponse(w, stdhttp.StatusInternalServerError, adminErrorPayload{
+		span.End(stdhttp.StatusInternalServerError, "error", string(AdminErrorCodeInternalAdminAPIError))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusInternalServerError, adminErrorPayload{
 			Code:    string(AdminErrorCodeInternalAdminAPIError),
 			Message: "failed to validate CSV payload",
-		})
+		}, meta)
 		return
 	}
 
 	report := result.report()
 	if result.RowsValid == 0 {
-		writeAdminErrorResponse(w, stdhttp.StatusUnprocessableEntity, adminErrorPayload{
+		span.End(stdhttp.StatusUnprocessableEntity, "error", string(AdminErrorCodeCSVRowInvalid))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusUnprocessableEntity, adminErrorPayload{
 			Code:    string(AdminErrorCodeCSVRowInvalid),
 			Message: "CSV payload contains no valid rows",
 			Details: report,
-		})
+		}, meta)
 		return
 	}
 
 	if handler.queueWriter == nil {
-		writeAdminErrorResponse(w, stdhttp.StatusInternalServerError, adminErrorPayload{
+		span.End(stdhttp.StatusInternalServerError, "error", string(AdminErrorCodeInternalAdminAPIError))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusInternalServerError, adminErrorPayload{
 			Code:    string(AdminErrorCodeInternalAdminAPIError),
 			Message: "queue writer is not configured",
 			Details: report,
-		})
+		}, meta)
 		return
 	}
 
@@ -372,22 +470,24 @@ func (handler adminTasksHandler) importCSV(w stdhttp.ResponseWriter, r *stdhttp.
 		})
 	}
 
-	batchResult, writeErr := handler.queueWriter.EnqueueValidatedBatch(r.Context(), validatedRows)
+	batchResult, writeErr := handler.queueWriter.EnqueueValidatedBatch(ctx, validatedRows)
 	if writeErr != nil {
 		adminCode := AdminErrorCodeInternalAdminAPIError
 		if domain.IsDomainErrorCode(writeErr, domain.ErrorCodeTaskQueueWriteFailed) {
 			adminCode = AdminErrorCodeQueueWriteFailed
 		}
 
-		writeAdminErrorResponse(w, stdhttp.StatusInternalServerError, adminErrorPayload{
+		span.End(stdhttp.StatusInternalServerError, "error", string(adminCode))
+		writeAdminErrorResponseWithMeta(w, stdhttp.StatusInternalServerError, adminErrorPayload{
 			Code:    string(adminCode),
 			Message: "failed to persist queued tasks",
 			Details: report,
-		})
+		}, meta)
 		return
 	}
 
-	writeAdminSuccessResponse(w, stdhttp.StatusOK, adminCSVImportReport{
+	span.End(stdhttp.StatusOK, "success", "none")
+	writeAdminSuccessResponseWithMeta(w, stdhttp.StatusOK, adminCSVImportReport{
 		RowsTotal:   result.RowsTotal,
 		RowsValid:   result.RowsValid,
 		RowsInvalid: result.RowsInvalid,
@@ -400,7 +500,7 @@ func (handler adminTasksHandler) importCSV(w stdhttp.ResponseWriter, r *stdhttp.
 		},
 		InvalidRows: result.InvalidRows,
 		SkippedRows: batchResult.SkippedRows,
-	})
+	}, meta)
 }
 
 func writeAdminEndpointNotImplemented(w stdhttp.ResponseWriter, endpoint string) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,6 +126,236 @@ func TestExecuteTasksFailuresReturnsExitCodeOneOnAPIError(t *testing.T) {
 	errOut := stderr.String()
 	if !strings.Contains(errOut, "ADMIN_ENDPOINT_NOT_AVAILABLE") {
 		t.Fatalf("expected stderr to contain API code, got %q", errOut)
+	}
+}
+
+func TestExecuteTasksRetryTableSuccess(t *testing.T) {
+	t.Parallel()
+
+	server := newReadCommandsTestServer(t)
+	defer server.Close()
+
+	client, err := adminclient.New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("adminclient.New() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(
+		context.Background(),
+		[]string{"tasks", "retry", "00000000-0000-0000-0000-000000000003"},
+		Dependencies{
+			Client: client,
+			Stdout: &stdout,
+			Stderr: &stderr,
+		},
+	)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%q", code, stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"retry requested",
+		"task_id=00000000-0000-0000-0000-000000000003",
+		"new_task_id=00000000-0000-0000-0000-000000000301",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected retry success output to contain %q, got:\n%s", want, out)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr for success path, got %q", stderr.String())
+	}
+}
+
+func TestExecuteTasksCancelJSONSuccess(t *testing.T) {
+	t.Parallel()
+
+	server := newReadCommandsTestServer(t)
+	defer server.Close()
+
+	client, err := adminclient.New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("adminclient.New() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(
+		context.Background(),
+		[]string{"tasks", "cancel", "--output", "json", "00000000-0000-0000-0000-000000000004"},
+		Dependencies{
+			Client: client,
+			Stdout: &stdout,
+			Stderr: &stderr,
+		},
+	)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%q", code, stderr.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v", err)
+	}
+	if payload["action"] != "cancel requested" {
+		t.Fatalf("expected action=cancel requested, got %v", payload["action"])
+	}
+	if payload["task_id"] != "00000000-0000-0000-0000-000000000004" {
+		t.Fatalf("expected task_id=00000000-0000-0000-0000-000000000004, got %v", payload["task_id"])
+	}
+
+	metaValue, ok := payload["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected meta object, got %#v", payload["meta"])
+	}
+	if metaValue["correlation_id"] != "corr-cancel-001" {
+		t.Fatalf("expected correlation_id corr-cancel-001, got %#v", metaValue["correlation_id"])
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr for success path, got %q", stderr.String())
+	}
+}
+
+func TestExecuteTasksRetryJSONErrorIncludesCorrelationID(t *testing.T) {
+	t.Parallel()
+
+	server := newReadCommandsTestServer(t)
+	defer server.Close()
+
+	client, err := adminclient.New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("adminclient.New() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(
+		context.Background(),
+		[]string{"tasks", "retry", "--output", "json", "00000000-0000-0000-0000-000000000005"},
+		Dependencies{
+			Client: client,
+			Stdout: &stdout,
+			Stderr: &stderr,
+		},
+	)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+		t.Fatalf("stderr is not valid JSON: %v", err)
+	}
+	errorValue, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object, got %#v", payload["error"])
+	}
+	if errorValue["code"] != "RETRY_NOT_ALLOWED" {
+		t.Fatalf("expected error code RETRY_NOT_ALLOWED, got %#v", errorValue["code"])
+	}
+	metaValue, ok := payload["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected meta object, got %#v", payload["meta"])
+	}
+	if metaValue["correlation_id"] != "corr-retry-conflict-001" {
+		t.Fatalf("expected correlation_id corr-retry-conflict-001, got %#v", metaValue["correlation_id"])
+	}
+}
+
+func TestExecuteTasksRetryRejectsUnknownOutputMode(t *testing.T) {
+	t.Parallel()
+
+	server := newReadCommandsTestServer(t)
+	defer server.Close()
+
+	client, err := adminclient.New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("adminclient.New() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(
+		context.Background(),
+		[]string{"tasks", "retry", "--output", "yaml", "00000000-0000-0000-0000-000000000003"},
+		Dependencies{
+			Client: client,
+			Stdout: &stdout,
+			Stderr: &stderr,
+		},
+	)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "unsupported output mode") {
+		t.Fatalf("expected usage error for unknown output mode, got %q", stderr.String())
+	}
+}
+
+func TestExecuteTasksCancelRejectsInvalidTaskID(t *testing.T) {
+	t.Parallel()
+
+	server := newReadCommandsTestServer(t)
+	defer server.Close()
+
+	client, err := adminclient.New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("adminclient.New() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(
+		context.Background(),
+		[]string{"tasks", "cancel", "not-a-uuid"},
+		Dependencies{
+			Client: client,
+			Stdout: &stdout,
+			Stderr: &stderr,
+		},
+	)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "TASK_ID_INVALID") {
+		t.Fatalf("expected TASK_ID_INVALID in stderr, got %q", stderr.String())
+	}
+}
+
+func TestExecuteTasksRetryReturnsExitCodeOneOnNetworkFailure(t *testing.T) {
+	t.Parallel()
+
+	client, err := adminclient.New(
+		"http://example.invalid",
+		&http.Client{
+			Transport: commandRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("dial timeout")
+			}),
+		},
+	)
+	if err != nil {
+		t.Fatalf("adminclient.New() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(
+		context.Background(),
+		[]string{"tasks", "retry", "00000000-0000-0000-0000-000000000003"},
+		Dependencies{
+			Client: client,
+			Stdout: &stdout,
+			Stderr: &stderr,
+		},
+	)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "NETWORK_ERROR") {
+		t.Fatalf("expected NETWORK_ERROR in stderr, got %q", stderr.String())
 	}
 }
 
@@ -286,8 +517,62 @@ func newReadCommandsTestServer(t *testing.T) *httptest.Server {
 				"error": nil,
 				"meta":  map[string]any{},
 			})
+		case "/api/v1/tasks/00000000-0000-0000-0000-000000000003/retry":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"source_task_id": "00000000-0000-0000-0000-000000000003",
+					"new_task_id":    "00000000-0000-0000-0000-000000000301",
+					"status":         "queued",
+				},
+				"error": nil,
+				"meta": map[string]any{
+					"correlation_id": "corr-retry-001",
+				},
+			})
+		case "/api/v1/tasks/00000000-0000-0000-0000-000000000005/retry":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": nil,
+				"error": map[string]any{
+					"code":    "RETRY_NOT_ALLOWED",
+					"message": "retry is not allowed for the current task status",
+				},
+				"meta": map[string]any{
+					"correlation_id": "corr-retry-conflict-001",
+				},
+			})
+		case "/api/v1/tasks/00000000-0000-0000-0000-000000000004/cancel":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"task_id":       "00000000-0000-0000-0000-000000000004",
+					"status":        "canceled",
+					"result_reason": "task canceled by admin operator",
+				},
+				"error": nil,
+				"meta": map[string]any{
+					"correlation_id": "corr-cancel-001",
+				},
+			})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+type commandRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f commandRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

@@ -1,10 +1,12 @@
 package httptransport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"strconv"
@@ -42,7 +44,7 @@ func TestAdminTaskSkeletonEndpointsReturnStandardizedEnvelope(t *testing.T) {
 	}{
 		{name: "tasks list", method: stdhttp.MethodGet, path: "/api/v1/tasks", status: stdhttp.StatusNotImplemented, errorCode: string(AdminErrorCodeEndpointNotImplemented)},
 		{name: "task retry", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/retry", status: stdhttp.StatusServiceUnavailable, errorCode: string(AdminErrorCodeEndpointTemporarilyClosed)},
-		{name: "task cancel", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/cancel", status: stdhttp.StatusNotImplemented, errorCode: string(AdminErrorCodeEndpointNotImplemented)},
+		{name: "task cancel", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/cancel", status: stdhttp.StatusServiceUnavailable, errorCode: string(AdminErrorCodeEndpointTemporarilyClosed)},
 		{name: "task failures", method: stdhttp.MethodGet, path: "/api/v1/tasks/failures", status: stdhttp.StatusServiceUnavailable, errorCode: string(AdminErrorCodeEndpointTemporarilyClosed)},
 	}
 
@@ -605,6 +607,151 @@ func TestAdminTaskRetryEndpointCreatesLinkedQueuedTask(t *testing.T) {
 	}
 }
 
+func TestAdminTaskRetryEndpointEchoesCorrelationIDInHeaderAndMeta(t *testing.T) {
+	t.Parallel()
+
+	sourceID := uuid.New()
+	newID := uuid.New()
+	taskReader := &fakeAdminTaskReader{
+		retryTask: domain.Task{
+			ID:            newID,
+			AccountID:     uuid.New(),
+			TargetProfile: "https://oskelly.ru/profile/retry-correlation",
+			Status:        domain.TaskStatusQueued,
+		},
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	req, err := stdhttp.NewRequest(stdhttp.MethodPost, server.URL+"/api/v1/tasks/"+sourceID.String()+"/retry", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Header.Set("X-Correlation-ID", "corr-retry-meta-001")
+	resp, err := stdhttp.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks/{id}/retry failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("X-Correlation-ID"); got != "corr-retry-meta-001" {
+		t.Fatalf("expected response header X-Correlation-ID=corr-retry-meta-001, got %q", got)
+	}
+
+	var envelope struct {
+		Data  map[string]any     `json:"data"`
+		Error *adminErrorPayload `json:"error"`
+		Meta  struct {
+			CorrelationID string `json:"correlation_id"`
+		} `json:"meta"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Meta.CorrelationID != "corr-retry-meta-001" {
+		t.Fatalf("expected meta.correlation_id corr-retry-meta-001, got %q", envelope.Meta.CorrelationID)
+	}
+}
+
+func TestAdminTaskRetryEndpointGeneratesCorrelationIDWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	sourceID := uuid.New()
+	newID := uuid.New()
+	taskReader := &fakeAdminTaskReader{
+		retryTask: domain.Task{
+			ID:            newID,
+			AccountID:     uuid.New(),
+			TargetProfile: "https://oskelly.ru/profile/retry-generated-correlation",
+			Status:        domain.TaskStatusQueued,
+		},
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	req, err := stdhttp.NewRequest(stdhttp.MethodPost, server.URL+"/api/v1/tasks/"+sourceID.String()+"/retry", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	resp, err := stdhttp.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks/{id}/retry failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	correlationID := strings.TrimSpace(resp.Header.Get("X-Correlation-ID"))
+	if correlationID == "" {
+		t.Fatal("expected generated X-Correlation-ID header to be non-empty")
+	}
+	if _, err := uuid.Parse(correlationID); err != nil {
+		t.Fatalf("expected generated correlation id to be UUID, got %q (err=%v)", correlationID, err)
+	}
+
+	var envelope struct {
+		Data  map[string]any     `json:"data"`
+		Error *adminErrorPayload `json:"error"`
+		Meta  struct {
+			CorrelationID string `json:"correlation_id"`
+		} `json:"meta"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Meta.CorrelationID != correlationID {
+		t.Fatalf("expected meta.correlation_id=%q, got %q", correlationID, envelope.Meta.CorrelationID)
+	}
+}
+
+func TestAdminCSVEndpointEmitsStructuredOperationLogWithRequiredFields(t *testing.T) {
+	t.Parallel()
+
+	var logBuffer bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuffer, nil))
+	server := httptest.NewServer(NewServer(
+		ServerConfig{Address: ":0"},
+		stdhttp.NotFoundHandler(),
+		stdhttp.NotFoundHandler(),
+		NewAdminTasksHandler(nil, nil, nil, WithAdminLogger(logger)),
+	).Handler)
+	defer server.Close()
+
+	req, err := stdhttp.NewRequest(
+		stdhttp.MethodPost,
+		server.URL+"/api/v1/tasks:csv",
+		strings.NewReader("account,target_profile\n"),
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Header.Set("X-Correlation-ID", "corr-csv-log-001")
+	resp, err := stdhttp.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks:csv failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", resp.StatusCode)
+	}
+
+	logOutput := logBuffer.String()
+	required := []string{
+		"admin.csv_import",
+		"correlation_id",
+		"admin.action",
+		"task_id",
+		"operation.result",
+		"http.route",
+		"http.status_code",
+		"error_code",
+	}
+	for _, want := range required {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("expected log output to contain %q, got:\n%s", want, logOutput)
+		}
+	}
+}
+
 func TestAdminTaskRetryEndpointReturnsTaskIDValidationError(t *testing.T) {
 	t.Parallel()
 
@@ -712,6 +859,222 @@ func TestAdminTaskRetryEndpointSanitizesInternalErrors(t *testing.T) {
 	resp, err := stdhttp.Post(server.URL+"/api/v1/tasks/"+uuid.NewString()+"/retry", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST /api/v1/tasks/{id}/retry failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", resp.StatusCode)
+	}
+
+	var envelope adminResponseEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Error == nil {
+		t.Fatal("expected error envelope")
+	}
+	if envelope.Error.Code != string(AdminErrorCodeInternalAdminAPIError) {
+		t.Fatalf("expected %q, got %q", AdminErrorCodeInternalAdminAPIError, envelope.Error.Code)
+	}
+	if strings.Contains(strings.ToLower(envelope.Error.Message), "secret") {
+		t.Fatalf("unexpected secret in error message: %q", envelope.Error.Message)
+	}
+}
+
+func TestAdminTaskCancelEndpointReturnsCanceledTaskContract(t *testing.T) {
+	t.Parallel()
+
+	taskID := uuid.New()
+	taskReader := &fakeAdminTaskReader{
+		cancelTask: domain.Task{
+			ID:           taskID,
+			Status:       domain.TaskStatusCanceled,
+			ResultReason: "task canceled by admin operator",
+		},
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	req, err := stdhttp.NewRequest(stdhttp.MethodPost, server.URL+"/api/v1/tasks/"+taskID.String()+"/cancel", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Header.Set("X-Correlation-ID", "corr-cancel-001")
+	resp, err := stdhttp.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks/{id}/cancel failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var envelope struct {
+		Data struct {
+			TaskID        string  `json:"task_id"`
+			Status        string  `json:"status"`
+			ResultReason  string  `json:"result_reason"`
+			CorrelationID *string `json:"correlation_id"`
+		} `json:"data"`
+		Error *adminErrorPayload `json:"error"`
+		Meta  adminMetaEnvelope  `json:"meta"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Error != nil {
+		t.Fatalf("expected success envelope, got error %+v", envelope.Error)
+	}
+	if envelope.Data.TaskID != taskID.String() {
+		t.Fatalf("expected task_id %s, got %s", taskID.String(), envelope.Data.TaskID)
+	}
+	if envelope.Data.Status != string(domain.TaskStatusCanceled) {
+		t.Fatalf("expected status %s, got %s", domain.TaskStatusCanceled, envelope.Data.Status)
+	}
+	if envelope.Data.ResultReason != "task canceled by admin operator" {
+		t.Fatalf("expected result_reason to be returned, got %q", envelope.Data.ResultReason)
+	}
+	if envelope.Data.CorrelationID == nil || *envelope.Data.CorrelationID != "corr-cancel-001" {
+		t.Fatalf("expected correlation_id corr-cancel-001, got %+v", envelope.Data.CorrelationID)
+	}
+	if taskReader.cancelCalls != 1 {
+		t.Fatalf("expected CancelTask call count 1, got %d", taskReader.cancelCalls)
+	}
+	if taskReader.cancelTaskID != taskID {
+		t.Fatalf("expected CancelTask task id %s, got %s", taskID.String(), taskReader.cancelTaskID.String())
+	}
+}
+
+func TestAdminTaskCancelEndpointReturnsTaskIDValidationError(t *testing.T) {
+	t.Parallel()
+
+	taskReader := &fakeAdminTaskReader{}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	resp, err := stdhttp.Post(server.URL+"/api/v1/tasks/not-a-uuid/cancel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks/not-a-uuid/cancel failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", resp.StatusCode)
+	}
+
+	var envelope adminResponseEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Error == nil {
+		t.Fatal("expected error envelope")
+	}
+	if envelope.Error.Code != string(AdminErrorCodeTaskIDInvalid) {
+		t.Fatalf("expected %q, got %q", AdminErrorCodeTaskIDInvalid, envelope.Error.Code)
+	}
+	if taskReader.cancelCalls != 0 {
+		t.Fatalf("expected CancelTask not called on invalid id, got %d calls", taskReader.cancelCalls)
+	}
+}
+
+func TestAdminTaskCancelEndpointReturnsTaskNotFound(t *testing.T) {
+	t.Parallel()
+
+	taskReader := &fakeAdminTaskReader{
+		cancelErr: domain.NewDomainError(domain.ErrorCodeTaskNotFound, "task missing"),
+	}
+	taskID := uuid.New()
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	resp, err := stdhttp.Post(server.URL+"/api/v1/tasks/"+taskID.String()+"/cancel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks/{id}/cancel failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != stdhttp.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", resp.StatusCode)
+	}
+
+	var envelope adminResponseEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Error == nil {
+		t.Fatal("expected error envelope")
+	}
+	if envelope.Error.Code != string(AdminErrorCodeTaskNotFound) {
+		t.Fatalf("expected %q, got %q", AdminErrorCodeTaskNotFound, envelope.Error.Code)
+	}
+}
+
+func TestAdminTaskCancelEndpointReturnsConflictCodes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "cancel not allowed",
+			err:  domain.NewDomainError(domain.ErrorCodeCancelNotAllowed, "cancel denied"),
+			want: string(AdminErrorCodeCancelNotAllowed),
+		},
+		{
+			name: "task state conflict",
+			err:  domain.NewDomainError(domain.ErrorCodeInvalidTaskTransition, "transition denied"),
+			want: string(AdminErrorCodeTaskStateConflict),
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			taskReader := &fakeAdminTaskReader{
+				cancelErr: tc.err,
+			}
+			server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+			defer server.Close()
+
+			resp, err := stdhttp.Post(server.URL+"/api/v1/tasks/"+uuid.NewString()+"/cancel", "application/json", nil)
+			if err != nil {
+				t.Fatalf("POST /api/v1/tasks/{id}/cancel failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != stdhttp.StatusConflict {
+				t.Fatalf("expected status 409, got %d", resp.StatusCode)
+			}
+
+			var envelope adminResponseEnvelope
+			if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+				t.Fatalf("decode envelope: %v", err)
+			}
+			if envelope.Error == nil {
+				t.Fatal("expected error envelope")
+			}
+			if envelope.Error.Code != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, envelope.Error.Code)
+			}
+		})
+	}
+}
+
+func TestAdminTaskCancelEndpointSanitizesInternalErrors(t *testing.T) {
+	t.Parallel()
+
+	taskReader := &fakeAdminTaskReader{
+		cancelErr: errors.New("db failure secret=token-987"),
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	resp, err := stdhttp.Post(server.URL+"/api/v1/tasks/"+uuid.NewString()+"/cancel", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /api/v1/tasks/{id}/cancel failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -965,6 +1328,11 @@ type fakeAdminTaskReader struct {
 	retryErr          error
 	retryCalls        int
 	retrySourceID     uuid.UUID
+	cancelTask        domain.Task
+	cancelErr         error
+	cancelCalls       int
+	cancelTaskID      uuid.UUID
+	cancelReason      string
 	failures          []domain.Task
 	listFailuresErr   error
 	listFailuresCalls int
@@ -1008,6 +1376,21 @@ func (f *fakeAdminTaskReader) RetryFromTask(
 		return domain.Task{}, f.retryErr
 	}
 	return f.retryTask, nil
+}
+
+func (f *fakeAdminTaskReader) CancelTask(
+	ctx context.Context,
+	taskID uuid.UUID,
+	reason string,
+) (domain.Task, error) {
+	_ = ctx
+	f.cancelCalls++
+	f.cancelTaskID = taskID
+	f.cancelReason = reason
+	if f.cancelErr != nil {
+		return domain.Task{}, f.cancelErr
+	}
+	return f.cancelTask, nil
 }
 
 type fakeAdminResultReader struct {

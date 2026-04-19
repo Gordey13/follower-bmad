@@ -37,17 +37,37 @@ type adminErrorPayload struct {
 	Details any    `json:"details,omitempty"`
 }
 
-type adminMetaEnvelope struct{}
+type adminMetaEnvelope struct {
+	CorrelationID string `json:"correlation_id,omitempty"`
+}
 
 func writeAdminSuccessResponse(w stdhttp.ResponseWriter, statusCode int, data any) {
+	writeAdminSuccessResponseWithMeta(w, statusCode, data, adminMetaEnvelope{})
+}
+
+func writeAdminSuccessResponseWithMeta(
+	w stdhttp.ResponseWriter,
+	statusCode int,
+	data any,
+	meta adminMetaEnvelope,
+) {
 	writeAdminEnvelope(w, statusCode, adminResponseEnvelope{
 		Data:  data,
 		Error: nil,
-		Meta:  adminMetaEnvelope{},
+		Meta:  meta,
 	})
 }
 
 func writeAdminErrorResponse(w stdhttp.ResponseWriter, statusCode int, payload adminErrorPayload) {
+	writeAdminErrorResponseWithMeta(w, statusCode, payload, adminMetaEnvelope{})
+}
+
+func writeAdminErrorResponseWithMeta(
+	w stdhttp.ResponseWriter,
+	statusCode int,
+	payload adminErrorPayload,
+	meta adminMetaEnvelope,
+) {
 	if strings.TrimSpace(payload.Code) == "" {
 		payload.Code = string(AdminErrorCodeInternalAdminAPIError)
 	}
@@ -58,11 +78,14 @@ func writeAdminErrorResponse(w stdhttp.ResponseWriter, statusCode int, payload a
 	writeAdminEnvelope(w, statusCode, adminResponseEnvelope{
 		Data:  nil,
 		Error: &payload,
-		Meta:  adminMetaEnvelope{},
+		Meta:  meta,
 	})
 }
 
 func writeAdminEnvelope(w stdhttp.ResponseWriter, statusCode int, envelope adminResponseEnvelope) {
+	if strings.TrimSpace(envelope.Meta.CorrelationID) != "" {
+		w.Header().Set("X-Correlation-ID", envelope.Meta.CorrelationID)
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(envelope)

@@ -33,7 +33,7 @@ func TestServerRegistersTechnicalAndAdminRoutes(t *testing.T) {
 		{name: "tasks list skeleton", method: stdhttp.MethodGet, path: "/api/v1/tasks", wantStatus: stdhttp.StatusNotImplemented},
 		{name: "task get detail route", method: stdhttp.MethodGet, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001", wantStatus: stdhttp.StatusServiceUnavailable},
 		{name: "task retry skeleton", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/retry", wantStatus: stdhttp.StatusServiceUnavailable},
-		{name: "task cancel skeleton", method: stdhttp.MethodPost, path: "/api/v1/tasks/123/cancel", wantStatus: stdhttp.StatusNotImplemented},
+		{name: "task cancel skeleton", method: stdhttp.MethodPost, path: "/api/v1/tasks/00000000-0000-0000-0000-000000000001/cancel", wantStatus: stdhttp.StatusServiceUnavailable},
 		{name: "task failures route", method: stdhttp.MethodGet, path: "/api/v1/tasks/failures", wantStatus: stdhttp.StatusServiceUnavailable},
 		{name: "task csv validation endpoint", method: stdhttp.MethodPost, path: "/api/v1/tasks:csv", wantStatus: stdhttp.StatusBadRequest},
 		{name: "legacy tasks remains missing", method: stdhttp.MethodGet, path: "/tasks", wantStatus: stdhttp.StatusNotFound},
