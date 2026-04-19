@@ -12,10 +12,21 @@ type ServerConfig struct {
 	IdleTimeout  time.Duration
 }
 
-func NewServer(cfg ServerConfig, healthHandler stdhttp.Handler, metricsHandler stdhttp.Handler) *stdhttp.Server {
+func NewServer(
+	cfg ServerConfig,
+	healthHandler stdhttp.Handler,
+	metricsHandler stdhttp.Handler,
+	adminHandler ...stdhttp.Handler,
+) *stdhttp.Server {
+	adminV1Handler := stdhttp.Handler(NewAdminTasksHandler(nil, nil, nil))
+	if len(adminHandler) > 0 && adminHandler[0] != nil {
+		adminV1Handler = adminHandler[0]
+	}
+
 	mux := stdhttp.NewServeMux()
 	mux.Handle("/healthz", healthHandler)
 	mux.Handle("/metrics", metricsHandler)
+	mux.Handle("/api/v1/", stdhttp.StripPrefix("/api/v1", adminV1Handler))
 
 	return &stdhttp.Server{
 		Addr:         cfg.Address,

@@ -14,6 +14,7 @@ import (
 	"follower/internal/credentials"
 	"follower/internal/domain"
 	"follower/internal/observability"
+	"follower/internal/repository"
 	postgresrepo "follower/internal/repository/postgres"
 	"follower/internal/storage"
 	"follower/internal/worker"
@@ -27,6 +28,8 @@ type runtimeDependencies struct {
 	executionService *worker.ExecutionService
 	claimLoop        *worker.ClaimLoop
 	metricsRefresher *operationalMetricsRefresher
+	taskRepository   repository.TaskRepository
+	resultRepository repository.ResultRepository
 	cleanup          func()
 }
 
@@ -177,6 +180,8 @@ func buildRuntimeDependencies(
 		executionService: executionService,
 		claimLoop:        claimLoop,
 		metricsRefresher: metricsRefresher,
+		taskRepository:   taskRepository,
+		resultRepository: resultRepository,
 		cleanup: func() {
 			pool.Close()
 		},

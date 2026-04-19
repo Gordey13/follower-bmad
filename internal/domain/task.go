@@ -10,6 +10,7 @@ import (
 
 type Task struct {
 	ID            uuid.UUID
+	SourceTaskID  *uuid.UUID
 	AccountID     uuid.UUID
 	TargetProfile TargetProfileDescriptor
 	Status        TaskStatus
@@ -29,6 +30,12 @@ func (task Task) Validate() error {
 		return NewDomainError(
 			ErrorCodeInvalidTaskIdentifier,
 			"task id must not be empty",
+		)
+	}
+	if task.SourceTaskID != nil && *task.SourceTaskID == task.ID {
+		return NewDomainError(
+			ErrorCodeInvalidTaskTransition,
+			"task source_task_id must not reference the same task id",
 		)
 	}
 	if task.AccountID == uuid.Nil {

@@ -30,12 +30,10 @@ type oskellyFollowRules struct {
 }
 
 const (
-	oskellyProfileURLPattern = `^https://oskelly\.ru/profile/[0-9]+$`
-	oskellyProfilePathRegex  = `^/profile/[0-9]+$`
+	oskellyProfilePathRegex = `^/profile/[0-9]+$`
 )
 
 var (
-	oskellyProfileURLMatcher  = regexp.MustCompile(oskellyProfileURLPattern)
 	oskellyProfilePathMatcher = regexp.MustCompile(oskellyProfilePathRegex)
 )
 
@@ -87,20 +85,7 @@ var defaultOskellyFollowRules = oskellyFollowRules{
 func normalizeOskellyTargetProfileURL(
 	target domain.TargetProfileDescriptor,
 ) (string, error) {
-	normalized := strings.TrimSpace(string(target))
-	if normalized == "" {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeFollowTargetProfile,
-			"target_profile must not be empty",
-		)
-	}
-	if !oskellyProfileURLMatcher.MatchString(normalized) {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeFollowTargetProfile,
-			"target_profile must match https://oskelly.ru/profile/<NUM>",
-		)
-	}
-	return normalized, nil
+	return domain.NormalizeOskellyTargetProfileURL(target)
 }
 
 func isResolvedOskellyProfileURL(rawURL string) bool {

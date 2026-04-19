@@ -953,6 +953,47 @@ func TestResolveBootstrapForClaimedTaskReturnsTypedErrorWhenBootstrapDisabled(t 
 	}
 }
 
+func TestResolveBootstrapForClaimedTaskReturnsBootstrapRequiredWhenRunnerMissing(t *testing.T) {
+	t.Parallel()
+
+	task := domain.Task{
+		ID:        uuid.New(),
+		AccountID: uuid.New(),
+		Status:    domain.TaskStatusRunning,
+		Attempt:   1,
+		ClaimedBy: "worker-bootstrap-runner-missing",
+	}
+	prepared := PreparedExecutionContext{
+		AccountWithProxy: domain.AccountWithProxy{
+			Account: domain.Account{
+				ID:               task.AccountID,
+				CredentialSource: domain.CredentialSourceEnv,
+				CredentialRef:    "env://FOLLOWER_BOOTSTRAP_USER,FOLLOWER_BOOTSTRAP_PASSWORD",
+			},
+		},
+		TaskID:             task.ID,
+		Attempt:            task.Attempt,
+		ExecutionContextID: task.ClaimedBy,
+		ReadyForFollowFlow: false,
+		BootstrapRequired:  true,
+		BootstrapReason:    domain.ErrorCodeAuthBootstrapRequired,
+		BootstrapSource:    domain.ErrorCodeSessionMetadataNotFound,
+	}
+
+	service := NewExecutionService(
+		&mockExecutionContextGuard{},
+		&mockExecutionSessionRestorer{},
+		testExecutionLogger(),
+	).WithSessionBootstrapPolicy(SessionBootstrapPolicy{
+		BootstrapLoginEnabled: true,
+	})
+
+	_, err := service.ResolveBootstrapForClaimedTask(context.Background(), task, prepared)
+	if !domain.IsDomainErrorCode(err, domain.ErrorCodeAuthBootstrapRequired) {
+		t.Fatalf("expected %s, got %v", domain.ErrorCodeAuthBootstrapRequired, err)
+	}
+}
+
 func TestResolveBootstrapForClaimedTaskMapsInvalidCredentialOutcome(t *testing.T) {
 	t.Parallel()
 

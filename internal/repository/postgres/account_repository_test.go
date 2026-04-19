@@ -691,6 +691,7 @@ func prepareTestDatabase(t *testing.T, pool *pgxpool.Pool) {
 
 		CREATE TABLE IF NOT EXISTS tasks (
 			id UUID PRIMARY KEY,
+			source_task_id UUID NULL REFERENCES tasks(id) ON DELETE RESTRICT,
 			account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
 			target_profile TEXT NOT NULL,
 			status TEXT NOT NULL,
@@ -704,7 +705,7 @@ func prepareTestDatabase(t *testing.T, pool *pgxpool.Pool) {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			CONSTRAINT chk_tasks_status CHECK (
-				status IN ('queued', 'running', 'success', 'retry', 'fail')
+				status IN ('queued', 'running', 'success', 'retry', 'fail', 'canceled')
 			),
 			CONSTRAINT chk_tasks_lifecycle_consistency CHECK (
 				(
@@ -756,10 +757,24 @@ func prepareTestDatabase(t *testing.T, pool *pgxpool.Pool) {
 						OR NULLIF(BTRIM(result_reason), '') IS NOT NULL
 					)
 				)
+				OR (
+					status = 'canceled'
+					AND attempt >= 0
+					AND NULLIF(BTRIM(target_profile), '') IS NOT NULL
+					AND claimed_by IS NULL
+					AND claimed_at IS NULL
+					AND started_at IS NULL
+					AND finished_at IS NOT NULL
+					AND error_code IS NULL
+					AND NULLIF(BTRIM(result_reason), '') IS NOT NULL
+				)
 			),
 			CONSTRAINT chk_tasks_lifecycle_temporal_order CHECK (
 				(claimed_at IS NULL OR started_at IS NULL OR claimed_at <= started_at)
 				AND (started_at IS NULL OR finished_at IS NULL OR started_at <= finished_at)
+			),
+			CONSTRAINT chk_tasks_source_task_not_self CHECK (
+				source_task_id IS NULL OR source_task_id <> id
 			)
 		);
 
@@ -769,6 +784,10 @@ func prepareTestDatabase(t *testing.T, pool *pgxpool.Pool) {
 
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_id_account
 			ON tasks (id, account_id);
+
+		CREATE INDEX IF NOT EXISTS idx_tasks_source_task_id_created_at
+			ON tasks (source_task_id, created_at DESC)
+			WHERE source_task_id IS NOT NULL;
 
 		CREATE TABLE IF NOT EXISTS follow_results (
 			task_id UUID NOT NULL,

@@ -3,11 +3,12 @@ package domain
 type TaskStatus string
 
 const (
-	TaskStatusQueued  TaskStatus = "queued"
-	TaskStatusRunning TaskStatus = "running"
-	TaskStatusSuccess TaskStatus = "success"
-	TaskStatusRetry   TaskStatus = "retry"
-	TaskStatusFail    TaskStatus = "fail"
+	TaskStatusQueued   TaskStatus = "queued"
+	TaskStatusRunning  TaskStatus = "running"
+	TaskStatusSuccess  TaskStatus = "success"
+	TaskStatusRetry    TaskStatus = "retry"
+	TaskStatusFail     TaskStatus = "fail"
+	TaskStatusCanceled TaskStatus = "canceled"
 )
 
 func (status TaskStatus) IsValid() bool {
@@ -16,7 +17,8 @@ func (status TaskStatus) IsValid() bool {
 		TaskStatusRunning,
 		TaskStatusSuccess,
 		TaskStatusRetry,
-		TaskStatusFail:
+		TaskStatusFail,
+		TaskStatusCanceled:
 		return true
 	default:
 		return false
@@ -25,7 +27,7 @@ func (status TaskStatus) IsValid() bool {
 
 func (status TaskStatus) IsTerminal() bool {
 	switch status {
-	case TaskStatusSuccess, TaskStatusRetry, TaskStatusFail:
+	case TaskStatusSuccess, TaskStatusRetry, TaskStatusFail, TaskStatusCanceled:
 		return true
 	default:
 		return false

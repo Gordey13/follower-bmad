@@ -261,8 +261,8 @@ func (s *ExecutionService) ResolveBootstrapForClaimedTask(
 	}
 	if s.bootstrapRunner == nil {
 		return PreparedExecutionContext{}, domain.NewDomainError(
-			domain.ErrorCodeAuthBootstrapFailed,
-			"bootstrap login runner is not configured",
+			domain.ErrorCodeAuthBootstrapRequired,
+			"bootstrap login runner is not configured; bootstrap resolution is pending",
 		)
 	}
 

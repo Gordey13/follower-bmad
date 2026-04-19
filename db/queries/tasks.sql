@@ -1,6 +1,7 @@
 -- task queue read model
 SELECT
     id,
+    source_task_id,
     account_id,
     status,
     attempt,
@@ -18,6 +19,7 @@ WHERE id = $1;
 -- queued backlog slice
 SELECT
     id,
+    source_task_id,
     account_id,
     status,
     attempt,
@@ -39,5 +41,5 @@ SELECT
     status,
     COUNT(*)::BIGINT AS total
 FROM tasks
-WHERE status IN ('queued', 'running', 'success', 'retry', 'fail')
+WHERE status IN ('queued', 'running', 'success', 'retry', 'fail', 'canceled')
 GROUP BY status;

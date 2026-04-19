@@ -5,6 +5,8 @@ tmpclaude-*
 .memory-bank/
 .gomodcache/
 .gocache/
+_bmad_done
+_bmad_hold
 
 # Временные файлы ОС
 *.tmp

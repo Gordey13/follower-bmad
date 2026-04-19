@@ -9,7 +9,7 @@ import (
 func TestTaskStatusValidationAndTransitions(t *testing.T) {
 	t.Parallel()
 
-	if !TaskStatusQueued.IsValid() || !TaskStatusRunning.IsValid() || !TaskStatusSuccess.IsValid() || !TaskStatusRetry.IsValid() || !TaskStatusFail.IsValid() {
+	if !TaskStatusQueued.IsValid() || !TaskStatusRunning.IsValid() || !TaskStatusSuccess.IsValid() || !TaskStatusRetry.IsValid() || !TaskStatusFail.IsValid() || !TaskStatusCanceled.IsValid() {
 		t.Fatal("expected all documented task statuses to be valid")
 	}
 	if TaskStatus("unknown").IsValid() {
@@ -66,6 +66,12 @@ func TestTaskValidate(t *testing.T) {
 	missingTargetProfile.TargetProfile = ""
 	if err := missingTargetProfile.Validate(); !IsDomainErrorCode(err, ErrorCodeFollowTargetProfile) {
 		t.Fatalf("expected %s, got %v", ErrorCodeFollowTargetProfile, err)
+	}
+
+	invalidSourceLink := valid
+	invalidSourceLink.SourceTaskID = &invalidSourceLink.ID
+	if err := invalidSourceLink.Validate(); !IsDomainErrorCode(err, ErrorCodeInvalidTaskTransition) {
+		t.Fatalf("expected %s for self source link, got %v", ErrorCodeInvalidTaskTransition, err)
 	}
 }
 

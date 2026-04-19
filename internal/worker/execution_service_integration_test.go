@@ -1078,6 +1078,7 @@ func prepareWorkerTestDatabase(t *testing.T, pool *pgxpool.Pool) {
 
 		CREATE TABLE IF NOT EXISTS tasks (
 			id UUID PRIMARY KEY,
+			source_task_id UUID NULL REFERENCES tasks(id) ON DELETE RESTRICT,
 			account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
 			target_profile TEXT NOT NULL,
 			status TEXT NOT NULL,
@@ -1091,20 +1092,32 @@ func prepareWorkerTestDatabase(t *testing.T, pool *pgxpool.Pool) {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			CONSTRAINT chk_tasks_status CHECK (
-				status IN ('queued', 'running', 'success', 'retry', 'fail')
+				status IN ('queued', 'running', 'success', 'retry', 'fail', 'canceled')
 			),
 			CONSTRAINT chk_tasks_target_profile_nonempty CHECK (
 				NULLIF(BTRIM(target_profile), '') IS NOT NULL
 			),
 			CONSTRAINT chk_tasks_reason_for_terminal_failure CHECK (
 				status IN ('queued', 'running', 'success')
+				OR (
+					status = 'canceled'
+					AND NULLIF(BTRIM(COALESCE(result_reason, '')), '') IS NOT NULL
+					AND COALESCE(error_code, '') = ''
+				)
 				OR COALESCE(error_code, '') <> ''
 				OR COALESCE(result_reason, '') <> ''
+			),
+			CONSTRAINT chk_tasks_source_task_not_self CHECK (
+				source_task_id IS NULL OR source_task_id <> id
 			)
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_tasks_status_claimed_at
 			ON tasks (status, claimed_at);
+
+		CREATE INDEX IF NOT EXISTS idx_tasks_source_task_id_created_at
+			ON tasks (source_task_id, created_at DESC)
+			WHERE source_task_id IS NOT NULL;
 	`)
 	if err != nil {
 		t.Fatalf("prepare worker integration schema: %v", err)

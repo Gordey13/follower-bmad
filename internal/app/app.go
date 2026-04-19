@@ -42,6 +42,11 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		},
 		httptransport.NewHealthHandler(healthService),
 		httptransport.NewMetricsHandler(observability.NewMetricsHandler(metricsRegistry)),
+		httptransport.NewAdminTasksHandler(
+			runtimeDeps.taskRepository,
+			runtimeDeps.taskRepository,
+			runtimeDeps.resultRepository,
+		),
 	)
 
 	return &App{

@@ -68,6 +68,17 @@ func TestResultRepositoryUpsertAndGetByTaskAttempt(t *testing.T) {
 	}
 }
 
+func TestResultRepositoryGetByTaskAttemptReturnsNotFound(t *testing.T) {
+	pool := mustOpenTestPool(t)
+	prepareFollowResultsSchema(t, pool)
+
+	resultRepository := postgresrepo.NewResultRepository(pool)
+	_, err := resultRepository.GetByTaskAttempt(context.Background(), uuid.New(), 1)
+	if !domain.IsDomainErrorCode(err, domain.ErrorCodeFollowResultNotFound) {
+		t.Fatalf("expected %s, got %v", domain.ErrorCodeFollowResultNotFound, err)
+	}
+}
+
 func TestResultRepositoryUpsertIsIdempotentByTaskAttempt(t *testing.T) {
 	pool := mustOpenTestPool(t)
 	prepareFollowResultsSchema(t, pool)

@@ -607,7 +607,7 @@ func TestRunIterationDoesNotDoubleCompleteWhenPreparationFails(t *testing.T) {
 	}
 }
 
-func TestRunIterationCompletesRetryWhenBootstrapResolutionFails(t *testing.T) {
+func TestRunIterationCompletesRetryWhenBootstrapResolutionIsPending(t *testing.T) {
 	t.Parallel()
 
 	taskID := uuid.New()
@@ -678,8 +678,8 @@ func TestRunIterationCompletesRetryWhenBootstrapResolutionFails(t *testing.T) {
 				prepared PreparedExecutionContext,
 			) (PreparedExecutionContext, error) {
 				return PreparedExecutionContext{}, domain.NewDomainError(
-					domain.ErrorCodeAuthBootstrapFailed,
-					"bootstrap runner timed out",
+					domain.ErrorCodeAuthBootstrapRequired,
+					"bootstrap login runner is not configured; bootstrap resolution is pending",
 				)
 			},
 			runFollowFn: func(
@@ -701,10 +701,10 @@ func TestRunIterationCompletesRetryWhenBootstrapResolutionFails(t *testing.T) {
 	if gotFinalStatus != domain.TaskStatusRetry {
 		t.Fatalf("expected final status %s, got %s", domain.TaskStatusRetry, gotFinalStatus)
 	}
-	if gotErrorCode != domain.ErrorCodeAuthBootstrapFailed {
-		t.Fatalf("expected error code %s, got %s", domain.ErrorCodeAuthBootstrapFailed, gotErrorCode)
+	if gotErrorCode != domain.ErrorCodeAuthBootstrapRequired {
+		t.Fatalf("expected error code %s, got %s", domain.ErrorCodeAuthBootstrapRequired, gotErrorCode)
 	}
-	if !strings.Contains(gotResultReason, "bootstrap_login_failed") {
+	if !strings.Contains(gotResultReason, "bootstrap_pending") {
 		t.Fatalf("expected bootstrap result reason, got %q", gotResultReason)
 	}
 	if runFollowCalled {

@@ -291,10 +291,14 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 
 	prepared, err = l.execution.ResolveBootstrapForClaimedTask(ctx, task, prepared)
 	if err != nil {
+		resultReason := "bootstrap_login_failed"
+		if claimLoopErrorCode(err) == domain.ErrorCodeAuthBootstrapRequired {
+			resultReason = "bootstrap_pending"
+		}
 		l.completeAfterExecutionError(
 			ctx,
 			task,
-			"bootstrap_login_failed",
+			resultReason,
 			err,
 		)
 		return
