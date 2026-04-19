@@ -328,6 +328,23 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 	}
 
 	outcome, diagnostics, followErr := l.runFollowStage(ctx, task, followInput)
+	bootstrapRecovered := false
+	if followErrorRequiresBootstrap(followErr) {
+		prepared, err = l.resolveAuthBootstrapForPreparedTask(ctx, task, prepared)
+		if err != nil {
+			l.completeAfterExecutionError(
+				ctx,
+				task,
+				"bootstrap_login_failed",
+				err,
+			)
+			return
+		}
+		followInput.SessionMetadata = prepared.SessionMetadata
+		followInput.SessionPayload = prepared.SessionPayload
+		outcome, diagnostics, followErr = l.runFollowStage(ctx, task, followInput)
+		bootstrapRecovered = true
+	}
 
 	resolvedOutcome := normalizeFollowOutcome(outcome, followErr)
 	l.recordExecutionOutcomeMetric(resolvedOutcome)
@@ -341,6 +358,28 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 		SessionPayload:     prepared.SessionPayload,
 	}
 	verification, verifyErr := l.runVerifyStage(ctx, task, verifyInput)
+	if !bootstrapRecovered && verificationRequestsBootstrap(verification, verifyErr) {
+		prepared, err = l.resolveAuthBootstrapForPreparedTask(ctx, task, prepared)
+		if err != nil {
+			l.completeAfterExecutionError(
+				ctx,
+				task,
+				"bootstrap_login_failed",
+				err,
+			)
+			return
+		}
+		followInput.SessionMetadata = prepared.SessionMetadata
+		followInput.SessionPayload = prepared.SessionPayload
+
+		outcome, diagnostics, followErr = l.runFollowStage(ctx, task, followInput)
+		resolvedOutcome = normalizeFollowOutcome(outcome, followErr)
+		l.recordExecutionOutcomeMetric(resolvedOutcome)
+
+		verifyInput.Outcome = resolvedOutcome
+		verifyInput.SessionPayload = prepared.SessionPayload
+		verification, verifyErr = l.runVerifyStage(ctx, task, verifyInput)
+	}
 	if verifyErr != nil {
 		verification = verificationFromError(verifyErr)
 	}
@@ -824,6 +863,46 @@ func sessionPayloadForFinalization(verification domain.FollowVerificationResult)
 		return nil
 	}
 	return append([]byte(nil), verification.SessionPayload...)
+}
+
+func followErrorRequiresBootstrap(err error) bool {
+	if err == nil {
+		return false
+	}
+	return claimLoopErrorCode(err) == domain.ErrorCodeAuthBootstrapRequired
+}
+
+func verificationRequestsBootstrap(
+	verification domain.FollowVerificationResult,
+	verifyErr error,
+) bool {
+	if verifyErr != nil {
+		return claimLoopErrorCode(verifyErr) == domain.ErrorCodeAuthBootstrapRequired
+	}
+	return !verification.Verified && verification.ErrorCode == domain.ErrorCodeAuthBootstrapRequired
+}
+
+func (l *ClaimLoop) resolveAuthBootstrapForPreparedTask(
+	ctx context.Context,
+	task domain.Task,
+	prepared PreparedExecutionContext,
+) (PreparedExecutionContext, error) {
+	prepared.BootstrapRequired = true
+	prepared.ReadyForFollowFlow = false
+	prepared.BootstrapReason = domain.ErrorCodeAuthBootstrapRequired
+	prepared.BootstrapSource = domain.ErrorCodeAuthBootstrapRequired
+
+	resolved, err := l.execution.ResolveBootstrapForClaimedTask(ctx, task, prepared)
+	if err != nil {
+		return PreparedExecutionContext{}, err
+	}
+	if !resolved.ReadyForFollowFlow {
+		return PreparedExecutionContext{}, domain.NewDomainError(
+			domain.ErrorCodeInternal,
+			"bootstrap resolution completed but follow flow is still not ready",
+		)
+	}
+	return resolved, nil
 }
 
 func finalStatusForErrorCode(errorCode domain.ErrorCode) domain.TaskStatus {

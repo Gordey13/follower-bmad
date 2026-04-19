@@ -411,10 +411,10 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	}
 
 	profileIconSelector := "svg.osk-icon.osk-icon_size-l.osk-header-top-actions__link"
-	emailPasswordLoginSelector := "button:has-text('Войти по email и паролю')"
-	emailInputSelector := "input[placeholder='E-mail']"
-	passwordInputSelector := "input[placeholder='Пароль']"
-	submitSelector := "button:has-text('Войти')"
+	emailPasswordLoginSelector := "button.osk-button.osk-button_color-secondary.osk-button_size-m.osk-button_full-width[type='button']"
+	emailInputSelector := "input.osk-input__input[type='text'][autocomplete='email']"
+	passwordInputSelector := "input.osk-input__input.osk-input__input_password[type='password'][autocomplete='current-password']"
+	submitSelector := "button.osk-button.osk-button_color-primary.osk-button_size-m.osk-button_full-width.osk-auth-login-dialog__button[type='submit']"
 
 	if _, err := page.Goto("https://oskelly.ru", playwright.PageGotoOptions{
 		Timeout:   playwright.Float(45000),
@@ -425,6 +425,13 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-home")
 
+	if _, err := page.WaitForSelector(profileIconSelector, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(15000),
+		State:   playwright.WaitForSelectorStateVisible,
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-profile-icon-wait-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
 	if err := page.Click(profileIconSelector, playwright.PageClickOptions{
 		Timeout: playwright.Float(15000),
 	}); err != nil {
@@ -433,6 +440,13 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-profile-icon")
 
+	if _, err := page.WaitForSelector(emailPasswordLoginSelector, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(15000),
+		State:   playwright.WaitForSelectorStateVisible,
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-email-password-button-wait-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
 	if err := page.Click(emailPasswordLoginSelector, playwright.PageClickOptions{
 		Timeout: playwright.Float(15000),
 	}); err != nil {
@@ -441,8 +455,22 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-email-password-form")
 
+	if _, err := page.WaitForSelector(emailInputSelector, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(15000),
+		State:   playwright.WaitForSelectorStateVisible,
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-email-wait-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
 	if err := page.Fill(emailInputSelector, credentials.Username); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-email-fill-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
+	if _, err := page.WaitForSelector(passwordInputSelector, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(15000),
+		State:   playwright.WaitForSelectorStateVisible,
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-password-wait-error")
 		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
 	}
 	if err := page.Fill(passwordInputSelector, credentials.Password); err != nil {
@@ -451,6 +479,13 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-credentials-filled")
 
+	if _, err := page.WaitForSelector(submitSelector, playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(15000),
+		State:   playwright.WaitForSelectorStateVisible,
+	}); err != nil {
+		captureBootstrapScreenshot(page, authScreenshots, "auth-submit-wait-error")
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+	}
 	if err := page.Click(submitSelector, playwright.PageClickOptions{
 		Timeout: playwright.Float(15000),
 	}); err != nil {
@@ -460,15 +495,14 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	captureBootstrapScreenshot(page, authScreenshots, "auth-submit")
 
 	time.Sleep(2 * time.Second)
-	if err := page.Click(profileIconSelector, playwright.PageClickOptions{
-		Timeout: playwright.Float(15000),
-	}); err != nil {
-		captureBootstrapScreenshot(page, authScreenshots, "auth-post-submit-profile-open-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
-	}
-	captureBootstrapScreenshot(page, authScreenshots, "auth-post-submit-profile-open")
+	captureBootstrapScreenshot(page, authScreenshots, "auth-post-submit")
 
-	if hasAnySelector(page, []string{emailPasswordLoginSelector}) {
+	if hasAnySelector(page, []string{
+		emailPasswordLoginSelector,
+		emailInputSelector,
+		passwordInputSelector,
+		submitSelector,
+	}) {
 		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, domain.NewDomainError(
 			domain.ErrorCodeAuthBootstrapFailed,
 			"login form remains available after submit",

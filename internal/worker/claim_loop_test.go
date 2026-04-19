@@ -892,6 +892,189 @@ func TestRunIterationRunsFollowAfterBootstrapResolutionSuccess(t *testing.T) {
 	}
 }
 
+func TestRunIterationReauthenticatesWhenFollowRequiresAuthBootstrap(t *testing.T) {
+	t.Parallel()
+
+	taskID := uuid.New()
+	accountID := uuid.New()
+	stalePayload := []byte(`{"cookies":[{"name":"sid","value":"stale"}]}`)
+	refreshedPayload := []byte(`{"cookies":[{"name":"sid","value":"fresh"}]}`)
+
+	var resolveBootstrapCalls int
+	var runFollowCalls int
+	var verifyCalls int
+	var gotFinalStatus domain.TaskStatus
+	var gotFinalizeRevision int64
+
+	loop := NewClaimLoop(
+		&mockClaimLoopRepository{
+			claimNextQueuedFn: func(ctx context.Context, claimedBy string) (domain.Task, bool, error) {
+				return domain.Task{
+					ID:            taskID,
+					AccountID:     accountID,
+					TargetProfile: "target-reauth-required",
+					Status:        domain.TaskStatusRunning,
+					Attempt:       1,
+					ClaimedBy:     claimedBy,
+				}, true, nil
+			},
+			completeFn: func(
+				ctx context.Context,
+				gotTaskID uuid.UUID,
+				claimedBy string,
+				finalStatus domain.TaskStatus,
+				errorCode domain.ErrorCode,
+				resultReason string,
+			) (domain.Task, error) {
+				gotFinalStatus = finalStatus
+				return domain.Task{
+					ID:           gotTaskID,
+					AccountID:    accountID,
+					Status:       finalStatus,
+					Attempt:      1,
+					ClaimedBy:    claimedBy,
+					ErrorCode:    errorCode,
+					ResultReason: resultReason,
+				}, nil
+			},
+		},
+		&mockClaimLoopHealth{status: observability.StatusReady},
+		&mockClaimLoopMetrics{},
+		"worker-reauth",
+		time.Second,
+		testClaimLoopLogger(),
+		&mockClaimLoopExecutionService{
+			prepareFn: func(ctx context.Context, task domain.Task) (PreparedExecutionContext, error) {
+				return PreparedExecutionContext{
+					AccountWithProxy: domain.AccountWithProxy{
+						Account: domain.Account{ID: task.AccountID},
+					},
+					SessionMetadata: domain.SessionMetadata{
+						AccountID: task.AccountID,
+						Revision:  1,
+						Status:    domain.SessionStatusValid,
+						ObjectKey: "accounts/" + task.AccountID.String() + "/sessions/1.json",
+					},
+					SessionPayload:     stalePayload,
+					ExecutionContextID: task.ClaimedBy,
+					ReadyForFollowFlow: true,
+				}, nil
+			},
+			resolveBootstrapFn: func(
+				ctx context.Context,
+				task domain.Task,
+				prepared PreparedExecutionContext,
+			) (PreparedExecutionContext, error) {
+				resolveBootstrapCalls++
+				if resolveBootstrapCalls == 1 {
+					if prepared.BootstrapRequired {
+						t.Fatal("did not expect bootstrap_required on initial resolve call")
+					}
+					return prepared, nil
+				}
+				if !prepared.BootstrapRequired {
+					t.Fatal("expected bootstrap_required=true on forced re-auth bootstrap")
+				}
+				if prepared.BootstrapReason != domain.ErrorCodeAuthBootstrapRequired {
+					t.Fatalf("expected bootstrap reason %s, got %s", domain.ErrorCodeAuthBootstrapRequired, prepared.BootstrapReason)
+				}
+				prepared.BootstrapRequired = false
+				prepared.ReadyForFollowFlow = true
+				prepared.SessionMetadata = domain.SessionMetadata{
+					AccountID: task.AccountID,
+					Revision:  2,
+					Status:    domain.SessionStatusValid,
+					ObjectKey: "accounts/" + task.AccountID.String() + "/sessions/2.json",
+				}
+				prepared.SessionPayload = refreshedPayload
+				return prepared, nil
+			},
+			runFollowFn: func(
+				ctx context.Context,
+				input domain.FollowFlowInput,
+			) (domain.FollowFlowOutcome, domain.FollowFlowDiagnostics, error) {
+				runFollowCalls++
+				if runFollowCalls == 1 {
+					return "", domain.FollowFlowDiagnostics{
+							Engine:              "mock",
+							WarmupDurationMS:    1,
+							WarmupCompleted:     false,
+							ExecutionDurationMS: 0,
+						}, domain.NewDomainError(
+							domain.ErrorCodeAuthBootstrapRequired,
+							"session authentication is required before follow flow",
+						)
+				}
+				if string(input.SessionPayload) != string(refreshedPayload) {
+					t.Fatalf("expected refreshed session payload, got %q", string(input.SessionPayload))
+				}
+				return domain.FollowFlowOutcomeCompleted, domain.FollowFlowDiagnostics{
+					Engine:              "mock",
+					WarmupDurationMS:    2,
+					WarmupCompleted:     true,
+					ExecutionDurationMS: 3,
+				}, nil
+			},
+			verifyFn: func(
+				ctx context.Context,
+				input domain.FollowVerificationInput,
+			) (domain.FollowVerificationResult, error) {
+				verifyCalls++
+				if string(input.SessionPayload) != string(refreshedPayload) {
+					t.Fatalf("expected refreshed payload in verify input, got %q", string(input.SessionPayload))
+				}
+				return domain.FollowVerificationResult{
+					Verified:          true,
+					Signal:            domain.FollowVerificationSignalFollowConfirmed,
+					Reason:            "verified after re-auth bootstrap",
+					SessionChanged:    true,
+					SessionPayload:    refreshedPayload,
+					ScreenshotPayload: []byte("fake-png"),
+				}, nil
+			},
+			finalizeFn: func(
+				ctx context.Context,
+				input domain.FollowExecutionFinalizationInput,
+			) (domain.FollowResult, error) {
+				gotFinalizeRevision = input.SessionRevision
+				return domain.FollowResult{
+					TaskID:              input.TaskID,
+					AccountID:           input.AccountID,
+					TargetProfile:       input.TargetProfile,
+					Attempt:             input.Attempt,
+					Outcome:             input.FollowOutcome,
+					Verified:            input.Verification.Verified,
+					VerificationSignal:  input.Verification.Signal,
+					VerificationReason:  input.Verification.Reason,
+					ScreenshotObjectKey: "accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/screenshots/follow.png",
+					ArtifactObjectKeys: []string{
+						"accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/artifacts/execution.json",
+					},
+					SessionRevision: input.SessionRevision,
+				}, nil
+			},
+		},
+	)
+
+	loop.runIteration(context.Background())
+
+	if resolveBootstrapCalls != 2 {
+		t.Fatalf("expected 2 bootstrap resolve calls (initial + re-auth), got %d", resolveBootstrapCalls)
+	}
+	if runFollowCalls != 2 {
+		t.Fatalf("expected 2 follow attempts (before/after re-auth), got %d", runFollowCalls)
+	}
+	if verifyCalls != 1 {
+		t.Fatalf("expected 1 verify call after successful re-auth, got %d", verifyCalls)
+	}
+	if gotFinalizeRevision != 2 {
+		t.Fatalf("expected finalized session revision 2, got %d", gotFinalizeRevision)
+	}
+	if gotFinalStatus != domain.TaskStatusSuccess {
+		t.Fatalf("expected final status %s, got %s", domain.TaskStatusSuccess, gotFinalStatus)
+	}
+}
+
 func TestRunIterationTreatsFollowAlreadyDoneAsSuccess(t *testing.T) {
 	t.Parallel()
 

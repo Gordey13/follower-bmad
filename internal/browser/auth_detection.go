@@ -13,10 +13,10 @@ func isAuthenticationRequiredPage(page playwright.Page, selectors []string) bool
 	if isAuthenticationRequiredURL(page.URL()) {
 		return true
 	}
-	if len(selectors) > 0 && hasAnySelector(page, selectors) {
+	if len(selectors) > 0 && hasAnyVisibleSelector(page, selectors) {
 		return true
 	}
-	return hasAuthenticationPromptText(page)
+	return false
 }
 
 func isAuthenticationRequiredURL(pageURL string) bool {
@@ -29,17 +29,15 @@ func isAuthenticationRequiredURL(pageURL string) bool {
 		strings.Contains(normalized, "/authorization")
 }
 
-func hasAuthenticationPromptText(page playwright.Page) bool {
-	content, err := page.Content()
-	if err != nil {
-		return false
+func hasAnyVisibleSelector(page playwright.Page, selectors []string) bool {
+	for _, selector := range selectors {
+		visible, err := page.IsVisible(selector)
+		if err != nil {
+			continue
+		}
+		if visible {
+			return true
+		}
 	}
-	normalized := strings.ToLower(content)
-	return containsAny(normalized, []string{
-		"войдите",
-		"авториз",
-		"sign in",
-		"log in",
-		"login",
-	})
+	return false
 }
