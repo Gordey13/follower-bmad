@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"follower/internal/domain"
+	"follower/internal/observability"
 	"follower/internal/repository"
 
 	"github.com/google/uuid"
@@ -144,6 +145,148 @@ func TestAdminTaskListEndpointReturnsTasks(t *testing.T) {
 			taskReader.lastListLimit,
 			taskReader.lastListOffset,
 		)
+	}
+}
+
+func TestAdminTaskListEndpointPropagatesCorrelationIDToHeaderAndMeta(t *testing.T) {
+	t.Parallel()
+
+	taskReader := &fakeAdminTaskReader{
+		tasks: []domain.Task{},
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	request, err := stdhttp.NewRequest(stdhttp.MethodGet, server.URL+"/api/v1/tasks", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	request.Header.Set("X-Correlation-ID", "corr-list-001")
+
+	response, err := stdhttp.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("GET /api/v1/tasks failed: %v", err)
+	}
+	defer response.Body.Close()
+
+	if got := response.Header.Get("X-Correlation-ID"); got != "corr-list-001" {
+		t.Fatalf("expected response header X-Correlation-ID=corr-list-001, got %q", got)
+	}
+
+	var envelope struct {
+		Data  map[string]any     `json:"data"`
+		Error *adminErrorPayload `json:"error"`
+		Meta  struct {
+			CorrelationID string `json:"correlation_id"`
+		} `json:"meta"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Meta.CorrelationID != "corr-list-001" {
+		t.Fatalf("expected meta.correlation_id=corr-list-001, got %q", envelope.Meta.CorrelationID)
+	}
+}
+
+func TestAdminTaskListEndpointGeneratesCorrelationIDWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	taskReader := &fakeAdminTaskReader{
+		tasks: []domain.Task{},
+	}
+	server := newAdminTaskServerWithDependencies(t, nil, taskReader, nil)
+	defer server.Close()
+
+	response, err := stdhttp.Get(server.URL + "/api/v1/tasks")
+	if err != nil {
+		t.Fatalf("GET /api/v1/tasks failed: %v", err)
+	}
+	defer response.Body.Close()
+
+	correlationID := strings.TrimSpace(response.Header.Get("X-Correlation-ID"))
+	if correlationID == "" {
+		t.Fatal("expected generated X-Correlation-ID header to be non-empty")
+	}
+	if _, err := uuid.Parse(correlationID); err != nil {
+		t.Fatalf("expected generated correlation id UUID, got %q (err=%v)", correlationID, err)
+	}
+
+	var envelope struct {
+		Data  map[string]any     `json:"data"`
+		Error *adminErrorPayload `json:"error"`
+		Meta  struct {
+			CorrelationID string `json:"correlation_id"`
+		} `json:"meta"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Meta.CorrelationID != correlationID {
+		t.Fatalf("expected meta.correlation_id=%q, got %q", correlationID, envelope.Meta.CorrelationID)
+	}
+}
+
+func TestAdminHandlersEmitAdminMetricsForSuccessAndErrorPaths(t *testing.T) {
+	t.Parallel()
+
+	registry := observability.NewMetricsRegistry()
+	adminMetrics := observability.NewAdminAPIMetrics(registry)
+	taskReader := &fakeAdminTaskReader{
+		tasks: []domain.Task{},
+	}
+
+	server := httptest.NewServer(NewServer(
+		ServerConfig{Address: ":0"},
+		stdhttp.NotFoundHandler(),
+		NewMetricsHandler(observability.NewMetricsHandler(registry)),
+		NewAdminTasksHandler(nil, taskReader, nil, WithAdminMetrics(adminMetrics)),
+	).Handler)
+	defer server.Close()
+
+	listResp, err := stdhttp.Get(server.URL + "/api/v1/tasks")
+	if err != nil {
+		t.Fatalf("GET /api/v1/tasks failed: %v", err)
+	}
+	defer listResp.Body.Close()
+	if listResp.StatusCode != stdhttp.StatusOK {
+		t.Fatalf("expected list status 200, got %d", listResp.StatusCode)
+	}
+
+	invalidResp, err := stdhttp.Get(server.URL + "/api/v1/tasks/not-a-uuid")
+	if err != nil {
+		t.Fatalf("GET /api/v1/tasks/not-a-uuid failed: %v", err)
+	}
+	defer invalidResp.Body.Close()
+	if invalidResp.StatusCode != stdhttp.StatusBadRequest {
+		t.Fatalf("expected invalid id status 400, got %d", invalidResp.StatusCode)
+	}
+
+	metricsResp, err := stdhttp.Get(server.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics failed: %v", err)
+	}
+	defer metricsResp.Body.Close()
+
+	body, err := io.ReadAll(metricsResp.Body)
+	if err != nil {
+		t.Fatalf("read metrics response: %v", err)
+	}
+	output := string(body)
+
+	if !strings.Contains(output, "follower_admin_api_requests_total") {
+		t.Fatalf("expected follower_admin_api_requests_total in /metrics output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "follower_admin_api_request_duration_seconds") {
+		t.Fatalf("expected follower_admin_api_request_duration_seconds in /metrics output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "follower_admin_api_errors_total") {
+		t.Fatalf("expected follower_admin_api_errors_total in /metrics output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "route=\"/api/v1/tasks\"") || !strings.Contains(output, "method=\"get\"") {
+		t.Fatalf("expected success route/method labels in metrics output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "route=\"/api/v1/tasks/{id}\"") || !strings.Contains(output, "error_code=\"task_id_invalid\"") {
+		t.Fatalf("expected error route/error_code labels in metrics output, got:\n%s", output)
 	}
 }
 

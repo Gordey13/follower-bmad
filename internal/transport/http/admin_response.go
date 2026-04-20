@@ -51,6 +51,7 @@ func writeAdminSuccessResponseWithMeta(
 	data any,
 	meta adminMetaEnvelope,
 ) {
+	annotateAdminResponseTelemetry(w, "success", "none")
 	writeAdminEnvelope(w, statusCode, adminResponseEnvelope{
 		Data:  data,
 		Error: nil,
@@ -75,6 +76,8 @@ func writeAdminErrorResponseWithMeta(
 		payload.Message = "internal admin API error"
 	}
 
+	annotateAdminResponseTelemetry(w, "error", payload.Code)
+
 	writeAdminEnvelope(w, statusCode, adminResponseEnvelope{
 		Data:  nil,
 		Error: &payload,
@@ -83,8 +86,11 @@ func writeAdminErrorResponseWithMeta(
 }
 
 func writeAdminEnvelope(w stdhttp.ResponseWriter, statusCode int, envelope adminResponseEnvelope) {
+	if strings.TrimSpace(envelope.Meta.CorrelationID) == "" {
+		envelope.Meta.CorrelationID = strings.TrimSpace(w.Header().Get(correlationIDHeader))
+	}
 	if strings.TrimSpace(envelope.Meta.CorrelationID) != "" {
-		w.Header().Set("X-Correlation-ID", envelope.Meta.CorrelationID)
+		w.Header().Set(correlationIDHeader, envelope.Meta.CorrelationID)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)

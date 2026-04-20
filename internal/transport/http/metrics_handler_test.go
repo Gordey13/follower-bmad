@@ -16,6 +16,7 @@ func TestMetricsEndpointPrometheusOutput(t *testing.T) {
 
 	registry := observability.NewMetricsRegistry()
 	metrics := observability.NewTaskLifecycleMetrics(registry)
+	adminMetrics := observability.NewAdminAPIMetrics(registry)
 	metrics.RecordClaimed()
 	metrics.RecordStarted()
 	metrics.RecordCompleted(string(domain.TaskStatusSuccess))
@@ -32,6 +33,14 @@ func TestMetricsEndpointPrometheusOutput(t *testing.T) {
 	metrics.SetSessionStatusSnapshot(map[domain.SessionStatus]int64{
 		domain.SessionStatusValid: 2,
 	})
+	adminMetrics.RecordRequest(
+		"/api/v1/tasks/{id}/retry",
+		"POST",
+		stdhttp.StatusConflict,
+		"error",
+		"task_state_conflict",
+		150000000,
+	)
 
 	metricsHandler := NewMetricsHandler(
 		observability.NewMetricsHandler(registry),
@@ -69,6 +78,9 @@ func TestMetricsEndpointPrometheusOutput(t *testing.T) {
 		"follower_dependency_ready",
 		"follower_account_operational_total",
 		"follower_session_status_total",
+		"follower_admin_api_requests_total",
+		"follower_admin_api_request_duration_seconds",
+		"follower_admin_api_errors_total",
 	}
 	for _, series := range requiredSeries {
 		if !strings.Contains(output, series) {

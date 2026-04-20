@@ -58,6 +58,7 @@ type adminTasksHandler struct {
 	resultReader   adminResultReader
 	logger         *slog.Logger
 	instrumenter   *observability.AdminInstrumentation
+	adminMetrics   *observability.AdminAPIMetrics
 }
 
 type AdminTasksHandlerOption func(*adminTasksHandler)
@@ -72,6 +73,15 @@ func WithAdminLogger(logger *slog.Logger) AdminTasksHandlerOption {
 		}
 		handler.logger = logger
 		handler.instrumenter = observability.NewAdminInstrumentation(logger)
+	}
+}
+
+func WithAdminMetrics(metrics *observability.AdminAPIMetrics) AdminTasksHandlerOption {
+	return func(handler *adminTasksHandler) {
+		if handler == nil || metrics == nil {
+			return
+		}
+		handler.adminMetrics = metrics
 	}
 }
 
@@ -110,6 +120,7 @@ func NewAdminTasksHandler(
 		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	handler.instrumenter = observability.NewAdminInstrumentation(handler.logger)
+	handler.adminMetrics = observability.NewAdminAPIMetrics(nil)
 	for _, option := range options {
 		if option != nil {
 			option(&handler)
@@ -122,7 +133,7 @@ func NewAdminTasksHandler(
 	mux.HandleFunc("POST /tasks/{id}/cancel", handler.cancelTask)
 	mux.HandleFunc("GET /tasks/failures", handler.listFailures)
 	mux.HandleFunc("POST /tasks:csv", handler.importCSV)
-	return mux
+	return handler.wrapWithAdminMiddleware(mux)
 }
 
 func (handler adminTasksHandler) listTasks(w stdhttp.ResponseWriter, r *stdhttp.Request) {

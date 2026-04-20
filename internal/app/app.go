@@ -26,6 +26,7 @@ type App struct {
 func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	metricsRegistry := observability.NewMetricsRegistry()
 	taskMetrics := observability.NewTaskLifecycleMetrics(metricsRegistry)
+	adminAPIMetrics := observability.NewAdminAPIMetrics(metricsRegistry)
 	healthService := buildHealthService(cfg)
 	healthService.SetDependencyObserver(taskMetrics)
 	runtimeDeps, err := buildRuntimeDependencies(cfg, healthService, taskMetrics, logger)
@@ -47,6 +48,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 			runtimeDeps.taskRepository,
 			runtimeDeps.resultRepository,
 			httptransport.WithAdminLogger(logger),
+			httptransport.WithAdminMetrics(adminAPIMetrics),
 		),
 	)
 
