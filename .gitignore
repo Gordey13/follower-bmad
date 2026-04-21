@@ -7,7 +7,7 @@ tmpclaude-*
 .gocache/
 _bmad_done
 _bmad_hold
-
+.omx/
 # Временные файлы ОС
 *.tmp
 *.temp
