@@ -18,6 +18,8 @@ Thumbs.db
 bin/
 scripts/
 SKILLS/
+.opencode
+.claude
 
 # Логи
 *.log
