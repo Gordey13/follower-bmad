@@ -22,7 +22,7 @@ build-windows:
 
 build-linux:
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_LOCAL_ARCH) go build -trimpath -ldflags="-s -w" -o $(DOCKER_LOCAL_BIN) $(CMD_PATH)
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_LOCAL_ARCH) go build -trimpath -gcflags="all=-N -l" -o $(DOCKER_LOCAL_BIN) $(CMD_PATH)
 
 build-followerctl-windows:
 	@mkdir -p $(BUILD_DIR)
@@ -30,7 +30,7 @@ build-followerctl-windows:
 
 build-followerctl-linux:
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_LOCAL_ARCH) go build -trimpath -ldflags="-s -w" -o $(DOCKER_LOCAL_CTL_BIN) $(CTL_CMD_PATH)
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_LOCAL_ARCH) go build -trimpath -gcflags="all=-N -l" -o $(DOCKER_LOCAL_CTL_BIN) $(CTL_CMD_PATH)
 
 build-docker: build-linux build-followerctl-linux
 	docker build --platform $(DOCKER_PLATFORM) --build-arg LOCAL_BINARY=$(DOCKER_LOCAL_BIN) --build-arg LOCAL_CTL_BINARY=$(DOCKER_LOCAL_CTL_BIN) --target final -t $(DOCKER_IMAGE) .

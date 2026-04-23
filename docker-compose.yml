@@ -20,8 +20,14 @@ services:
       follower.endpoint.metrics.host: "http://localhost:${FOLLOWER_HTTP_PORT:-8080}/metrics"
     ports:
       - "${FOLLOWER_HTTP_PORT:-8080}:8080"
-    volumes:
-      - ./config.compose.yaml:/app/config.yaml:ro
+    configs:
+      - source: follower_config
+        target: /app/config.yaml
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    networks: [follower-net]
 
   minio:
     image: minio/minio:latest
@@ -34,6 +40,7 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
+    networks: [follower-net]
 
   postgres:
     image: postgres:16-alpine
@@ -47,6 +54,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./db/migrations:/db-migrations:ro
       - ./scripts/postgres-init-migrations.sh:/docker-entrypoint-initdb.d/010-apply-migrations.sh:ro
+    networks: [follower-net]
 
   redis:
     image: redis:7-alpine
@@ -54,8 +62,69 @@ services:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+    networks: [follower-net]
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    networks: [follower-net]
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14250:14250" # gRPC ingest
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    command: ["--config=/etc/otel-collector.yaml"]
+    configs:
+      - source: otel_collector_config
+        target: /etc/otel-collector.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - jaeger
+    networks: [follower-net]
+
+  prometheus:
+    image: prom/prometheus:latest
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+      - follower
+    networks: [follower-net]
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [follower-net]
 
 volumes:
   postgres_data:
   minio_data:
   redis_data:
+  grafana-data:
+    driver: local
+
+configs:
+  follower_config:
+    file: ./config.compose.yaml
+  prometheus_config:
+    file: ./prometheus.yaml
+  otel_collector_config:
+    file: ./otel-collector.yaml
+
+networks:
+  follower-net:
+    driver: bridge
