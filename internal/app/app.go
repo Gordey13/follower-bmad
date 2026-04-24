@@ -9,6 +9,7 @@ import (
 
 	"follower/internal/config"
 	"follower/internal/observability"
+	"follower/internal/stackerr"
 	httptransport "follower/internal/transport/http"
 	"follower/internal/worker"
 )
@@ -31,7 +32,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	healthService.SetDependencyObserver(taskMetrics)
 	runtimeDeps, err := buildRuntimeDependencies(cfg, healthService, taskMetrics, logger)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	server := httptransport.NewServer(
@@ -93,13 +94,13 @@ func (a *App) Run(ctx context.Context) error {
 
 	select {
 	case err := <-serverErr:
-		return err
+		return stackerr.WithStack(err)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
 		defer cancel()
 
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			return err
+			return stackerr.WithStack(err)
 		}
 
 		return nil

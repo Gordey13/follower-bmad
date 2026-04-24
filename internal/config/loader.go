@@ -2,9 +2,10 @@ package config
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"strings"
+
+	"follower/internal/stackerr"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,22 +20,22 @@ func Load(path string) (Config, error) {
 
 	raw, err := os.ReadFile(targetPath)
 	if err != nil {
-		return Config{}, fmt.Errorf("read config file: %w", err)
+		return Config{}, stackerr.Wrap(err, "read config file")
 	}
 
 	cfg := defaultConfig()
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("parse config yaml: %w", err)
+		return Config{}, stackerr.Wrap(err, "parse config yaml")
 	}
 
 	if err := applyEnvOverrides(&cfg, os.LookupEnv); err != nil {
-		return Config{}, err
+		return Config{}, stackerr.WithStack(err)
 	}
 
 	if err := Validate(cfg); err != nil {
-		return Config{}, err
+		return Config{}, stackerr.WithStack(err)
 	}
 
 	return cfg, nil

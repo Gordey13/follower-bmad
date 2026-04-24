@@ -1,9 +1,10 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"strings"
+
+	"follower/internal/stackerr"
 )
 
 func Validate(cfg Config) error {
@@ -74,7 +75,7 @@ func Validate(cfg Config) error {
 	}
 
 	if len(problems) > 0 {
-		return errors.New(strings.Join(problems, "; "))
+		return stackerr.New(strings.Join(problems, "; "))
 	}
 
 	return nil

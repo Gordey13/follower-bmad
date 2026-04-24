@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 )
 
 type VerifyFlowRunner interface {
@@ -113,10 +114,10 @@ func (r *PlaywrightVerifyFlowRunner) VerifyFollowResult(
 	input domain.FollowVerificationInput,
 ) (domain.FollowVerificationResult, error) {
 	if err := ctx.Err(); err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 	if err := input.Validate(); err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 	if r.adapter == nil {
 		return domain.FollowVerificationResult{}, domain.NewDomainError(
@@ -127,13 +128,13 @@ func (r *PlaywrightVerifyFlowRunner) VerifyFollowResult(
 
 	detection, err := r.adapter.InspectFollowState(ctx, input)
 	if err != nil {
-		return domain.FollowVerificationResult{}, normalizePlaywrightVerifyError(err)
+		return domain.FollowVerificationResult{}, stackerr.WithStack(normalizePlaywrightVerifyError(err))
 	}
 	detection.ScreenshotPayload = ensureVerifyScreenshotPayload(detection.ScreenshotPayload, input.Outcome)
 
 	result := mapPlaywrightVerificationResult(input, detection)
 	if err := result.Validate(); err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 
 	if r.logger != nil {
@@ -305,10 +306,10 @@ func runVerifyFlow(
 	logger *slog.Logger,
 ) (domain.FollowVerificationResult, error) {
 	if err := ctx.Err(); err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 	if err := input.Validate(); err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 
 	if override, ok := overrides[input.Outcome]; ok {
@@ -319,14 +320,14 @@ func runVerifyFlow(
 			override.SessionPayload = clonePayload(input.SessionPayload)
 		}
 		if err := override.Validate(); err != nil {
-			return domain.FollowVerificationResult{}, err
+			return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 		}
 		return override, nil
 	}
 
 	result := defaultVerificationResult(input)
 	if err := result.Validate(); err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 
 	if logger != nil {

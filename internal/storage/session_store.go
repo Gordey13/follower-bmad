@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
@@ -39,13 +40,13 @@ func (c *MinioSessionObjectClient) Put(ctx context.Context, bucket string, objec
 		int64(len(payload)),
 		minio.PutObjectOptions{ContentType: contentTypeForObject(objectKey, payload)},
 	)
-	return err
+	return stackerr.WithStack(err)
 }
 
 func (c *MinioSessionObjectClient) Get(ctx context.Context, bucket string, objectKey string) ([]byte, error) {
 	object, err := c.client.GetObject(ctx, bucket, objectKey, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	defer object.Close()
 
@@ -58,7 +59,7 @@ func (c *MinioSessionObjectClient) Get(ctx context.Context, bucket string, objec
 			)
 		}
 
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	return payload, nil
@@ -111,14 +112,21 @@ func (s *SessionStore) Save(
 	if existingPayload, err := s.client.Get(ctx, s.bucket, objectKey); err == nil {
 		historyObjectKey := SessionHistoryObjectKey(ownerKey, NextUniqueKeyTimestamp(ownerKey, "history", time.Now().UTC()))
 		if err := s.client.Put(ctx, s.bucket, historyObjectKey, existingPayload); err != nil {
+<<<<<<< HEAD
 			return "", err
 		}
 	} else if !domain.IsDomainErrorCode(err, domain.ErrorCodeSessionPayloadMissing) {
 		return "", err
+=======
+			return "", stackerr.WithStack(err)
+		}
+	} else if !domain.IsDomainErrorCode(err, domain.ErrorCodeSessionPayloadMissing) {
+		return "", stackerr.WithStack(err)
+>>>>>>> 356ea5c (stackerr)
 	}
 
 	if err := s.client.Put(ctx, s.bucket, objectKey, payload); err != nil {
-		return "", err
+		return "", stackerr.WithStack(err)
 	}
 
 	return objectKey, nil
@@ -135,9 +143,9 @@ func (s *SessionStore) Load(ctx context.Context, accountID uuid.UUID, objectKey 
 	payload, err := s.client.Get(ctx, s.bucket, objectKey)
 	if err != nil {
 		if domain.IsDomainErrorCode(err, domain.ErrorCodeSessionPayloadMissing) {
-			return nil, err
+			return nil, stackerr.WithStack(err)
 		}
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	if !json.Valid(payload) {

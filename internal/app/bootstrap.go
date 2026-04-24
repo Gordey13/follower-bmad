@@ -7,6 +7,7 @@ import (
 
 	"follower/internal/config"
 	"follower/internal/observability"
+	"follower/internal/stackerr"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/minio/minio-go/v7"
@@ -21,7 +22,7 @@ type postgresChecker struct {
 func (c postgresChecker) Check(ctx context.Context) error {
 	conn, err := pgx.Connect(ctx, c.url)
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	defer conn.Close(ctx)
 
@@ -42,7 +43,7 @@ func (c minioChecker) Check(ctx context.Context) error {
 		Secure: c.useSSL,
 	})
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	exists, err := client.BucketExists(ctx, c.bucket)
@@ -71,9 +72,9 @@ func (c playwrightChecker) Check(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return stackerr.WithStack(ctx.Err())
 	case err := <-result:
-		return err
+		return stackerr.WithStack(err)
 	}
 }
 
@@ -120,7 +121,7 @@ func buildHealthService(cfg config.Config) *observability.HealthService {
 
 func minioBucketHealthError(bucket string, exists bool, err error) error {
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	if !exists {
 		return fmt.Errorf("minio bucket %q does not exist", bucket)

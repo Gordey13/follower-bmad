@@ -13,6 +13,7 @@ import (
 	"follower/internal/domain"
 	"follower/internal/observability"
 	"follower/internal/repository"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -52,7 +53,7 @@ func (r *TaskPostgresRepository) Enqueue(ctx context.Context, task domain.Task) 
 		)
 	}
 	if err := task.Validate(); err != nil {
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 	sourceTaskID := uuid.Nil
 	if task.SourceTaskID != nil {
@@ -354,7 +355,7 @@ func (r *TaskPostgresRepository) GetByID(ctx context.Context, taskID uuid.UUID) 
 		)
 	}
 
-	return task, err
+	return task, stackerr.WithStack(err)
 }
 
 func (r *TaskPostgresRepository) List(
@@ -396,7 +397,7 @@ func (r *TaskPostgresRepository) List(
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	defer rows.Close()
 
@@ -441,7 +442,7 @@ func (r *TaskPostgresRepository) List(
 		tasks = append(tasks, task)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	return tasks, nil
@@ -487,7 +488,7 @@ func (r *TaskPostgresRepository) ListFailures(
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	defer rows.Close()
 
@@ -532,7 +533,7 @@ func (r *TaskPostgresRepository) ListFailures(
 		tasks = append(tasks, task)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	return tasks, nil
@@ -551,7 +552,7 @@ func (r *TaskPostgresRepository) ClaimNextQueued(
 
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return domain.Task{}, false, err
+		return domain.Task{}, false, stackerr.WithStack(err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -598,11 +599,11 @@ func (r *TaskPostgresRepository) ClaimNextQueued(
 		return domain.Task{}, false, nil
 	}
 	if err != nil {
-		return domain.Task{}, false, err
+		return domain.Task{}, false, stackerr.WithStack(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return domain.Task{}, false, err
+		return domain.Task{}, false, stackerr.WithStack(err)
 	}
 
 	r.recordClaimedAudit(ctx, task)
@@ -632,7 +633,7 @@ func (r *TaskPostgresRepository) Complete(
 
 	currentTask, err := r.GetByID(ctx, taskID)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 	if currentTask.ClaimedBy != claimedBy {
 		return domain.Task{}, domain.NewDomainError(
@@ -646,7 +647,7 @@ func (r *TaskPostgresRepository) Complete(
 		)
 	}
 	if err := domain.ValidateTaskCompletion(currentTask.Status, finalStatus, errorCode, resultReason); err != nil {
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 
 	if finalStatus == domain.TaskStatusSuccess {
@@ -704,7 +705,7 @@ func (r *TaskPostgresRepository) Complete(
 		)
 	}
 	if err != nil {
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 
 	r.recordCompletedAudit(ctx, completedTask)
@@ -784,7 +785,7 @@ func (r *TaskPostgresRepository) applyAdminTransition(
 
 	transition, err := domain.EvaluateTaskAdminTransition(lockedTask.Status, action)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 	normalizedCancelReason := ""
 	if transition.Action == domain.TaskAdminActionCancel {
@@ -903,7 +904,7 @@ func (r *TaskPostgresRepository) RetryFromTask(
 	}
 
 	if _, err := domain.EvaluateTaskAdminTransition(sourceTask.Status, domain.TaskAdminActionRetry); err != nil {
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 
 	newTaskID := uuid.New()
@@ -992,7 +993,7 @@ func (r *TaskPostgresRepository) TaskQueueSnapshot(ctx context.Context) (map[dom
 		GROUP BY status
 	`)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	defer rows.Close()
 
@@ -1000,7 +1001,7 @@ func (r *TaskPostgresRepository) TaskQueueSnapshot(ctx context.Context) (map[dom
 		var status string
 		var count int64
 		if err := rows.Scan(&status, &count); err != nil {
-			return nil, err
+			return nil, stackerr.WithStack(err)
 		}
 
 		normalizedStatus := domain.TaskStatus(status)
@@ -1011,7 +1012,7 @@ func (r *TaskPostgresRepository) TaskQueueSnapshot(ctx context.Context) (map[dom
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	return snapshot, nil
@@ -1045,7 +1046,7 @@ func scanTask(row pgx.Row) (domain.Task, error) {
 		&task.UpdatedAt,
 	)
 	if err != nil {
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 
 	task.SourceTaskID = sourceTaskID
@@ -1146,7 +1147,7 @@ func appendAdminTransitionAuditLog(
 	)
 	diagnosticJSON, err := json.Marshal(diagnosticFields)
 	if err != nil {
-		return fmt.Errorf("marshal admin transition diagnostic fields: %w", err)
+		return stackerr.Wrap(err, "marshal admin transition diagnostic fields")
 	}
 
 	action := "task.admin_transitioned"
@@ -1187,7 +1188,7 @@ func appendAdminTransitionAuditLog(
 		diagnosticJSON,
 		time.Now().UTC(),
 	); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	return nil
@@ -1214,7 +1215,7 @@ func appendTaskRetryAuditLog(
 	)
 	diagnosticJSON, err := json.Marshal(diagnosticFields)
 	if err != nil {
-		return fmt.Errorf("marshal retry diagnostic fields: %w", err)
+		return stackerr.Wrap(err, "marshal retry diagnostic fields")
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -1240,7 +1241,7 @@ func appendTaskRetryAuditLog(
 		diagnosticJSON,
 		time.Now().UTC(),
 	); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	return nil

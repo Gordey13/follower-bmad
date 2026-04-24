@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/playwright-community/playwright-go"
 )
@@ -79,10 +80,10 @@ func (r *MockBootstrapLoginRunner) RunBootstrapLogin(
 	input domain.BootstrapLoginInput,
 ) (domain.BootstrapLoginResult, error) {
 	if err := ctx.Err(); err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 	if err := input.Validate(); err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 	if r.resolver == nil {
 		return domain.BootstrapLoginResult{}, domain.NewDomainError(
@@ -92,7 +93,7 @@ func (r *MockBootstrapLoginRunner) RunBootstrapLogin(
 	}
 	credentials, err := r.resolver.Resolve(ctx, input.CredentialSource, input.CredentialRef)
 	if err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 	if err := credentials.Validate(); err != nil {
 		return domain.BootstrapLoginResult{
@@ -133,7 +134,7 @@ func (r *MockBootstrapLoginRunner) RunBootstrapLogin(
 	}
 
 	if err := result.Validate(); err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 
 	r.logger.Debug(
@@ -188,10 +189,10 @@ func (r *PlaywrightBootstrapLoginRunner) RunBootstrapLogin(
 	input domain.BootstrapLoginInput,
 ) (domain.BootstrapLoginResult, error) {
 	if err := ctx.Err(); err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 	if err := input.Validate(); err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 	if r.resolver == nil {
 		return domain.BootstrapLoginResult{}, domain.NewDomainError(
@@ -208,7 +209,7 @@ func (r *PlaywrightBootstrapLoginRunner) RunBootstrapLogin(
 
 	credentials, err := r.resolver.Resolve(ctx, input.CredentialSource, input.CredentialRef)
 	if err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 	if err := credentials.Validate(); err != nil {
 		return domain.BootstrapLoginResult{
@@ -240,7 +241,7 @@ func (r *PlaywrightBootstrapLoginRunner) RunBootstrapLogin(
 		result.SessionPayload = nil
 	}
 	if err := result.Validate(); err != nil {
-		return domain.BootstrapLoginResult{}, err
+		return domain.BootstrapLoginResult{}, stackerr.WithStack(err)
 	}
 
 	r.logger.Debug(
@@ -263,7 +264,7 @@ func (a *defaultPlaywrightBootstrapAdapter) executeLegacy(
 	credentials domain.AccountCredentials,
 ) (domain.BootstrapLoginOutcome, []byte, error) {
 	if err := ctx.Err(); err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 	if err := credentials.Validate(); err != nil {
 		return domain.BootstrapLoginOutcomeAuthInvalidCredentials, nil, nil
@@ -271,7 +272,7 @@ func (a *defaultPlaywrightBootstrapAdapter) executeLegacy(
 
 	playwrightInstance, err := playwright.Run()
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 	defer playwrightInstance.Stop()
 
@@ -279,25 +280,25 @@ func (a *defaultPlaywrightBootstrapAdapter) executeLegacy(
 		Headless: playwright.Bool(true),
 	})
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 	defer browser.Close()
 
 	browserContext, err := browser.NewContext()
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 	defer browserContext.Close()
 
 	page, err := browserContext.NewPage()
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 
 	if _, err := page.Goto("https://oskelly.ru/login", playwright.PageGotoOptions{
 		Timeout: playwright.Float(45000),
 	}); err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 
 	if err := fillFirstSelector(page, []string{
@@ -306,13 +307,13 @@ func (a *defaultPlaywrightBootstrapAdapter) executeLegacy(
 		"input[name='login']",
 		"input[name='username']",
 	}, credentials.Username); err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 	if err := fillFirstSelector(page, []string{
 		"input[name='password']",
 		"input[type='password']",
 	}, credentials.Password); err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 	if err := clickFirstSelector(page, []string{
 		"section.authorization .login.active .submit input.form_submit",
@@ -326,7 +327,7 @@ func (a *defaultPlaywrightBootstrapAdapter) executeLegacy(
 		"button:has-text('Войти')",
 		"button:has-text('Login')",
 	}); err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(err)
 	}
 
 	if authenticated := waitAnySelector(page, []string{
@@ -337,11 +338,11 @@ func (a *defaultPlaywrightBootstrapAdapter) executeLegacy(
 	}, 30*time.Second); authenticated || isAuthenticatedURL(page.URL()) {
 		storageState, stateErr := browserContext.StorageState()
 		if stateErr != nil {
-			return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stateErr
+			return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(stateErr)
 		}
 		payload, marshalErr := json.Marshal(storageState)
 		if marshalErr != nil {
-			return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, marshalErr
+			return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, stackerr.WithStack(marshalErr)
 		}
 		return domain.BootstrapLoginOutcomeSuccess, payload, nil
 	}
@@ -379,7 +380,7 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	authScreenshots := map[string][]byte{}
 
 	if err := ctx.Err(); err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	if err := credentials.Validate(); err != nil {
 		return domain.BootstrapLoginOutcomeAuthInvalidCredentials, nil, authScreenshots, nil
@@ -387,7 +388,7 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 
 	playwrightInstance, err := playwright.Run()
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	defer playwrightInstance.Stop()
 
@@ -395,19 +396,19 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 		Headless: playwright.Bool(true),
 	})
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	defer browser.Close()
 
 	browserContext, err := browser.NewContext()
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	defer browserContext.Close()
 
 	page, err := browserContext.NewPage()
 	if err != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 
 	profileIconSelector := "svg.osk-icon.osk-icon_size-l.osk-header-top-actions__link"
@@ -421,7 +422,7 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-goto-home-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-home")
 
@@ -430,13 +431,13 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 		State:   playwright.WaitForSelectorStateVisible,
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-profile-icon-wait-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	if err := page.Click(profileIconSelector, playwright.PageClickOptions{
 		Timeout: playwright.Float(15000),
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-profile-icon-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-profile-icon")
 
@@ -445,13 +446,13 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 		State:   playwright.WaitForSelectorStateVisible,
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-email-password-button-wait-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	if err := page.Click(emailPasswordLoginSelector, playwright.PageClickOptions{
 		Timeout: playwright.Float(15000),
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-email-password-button-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-email-password-form")
 
@@ -460,22 +461,22 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 		State:   playwright.WaitForSelectorStateVisible,
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-email-wait-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	if err := page.Fill(emailInputSelector, credentials.Username); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-email-fill-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	if _, err := page.WaitForSelector(passwordInputSelector, playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(15000),
 		State:   playwright.WaitForSelectorStateVisible,
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-password-wait-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	if err := page.Fill(passwordInputSelector, credentials.Password); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-password-fill-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-credentials-filled")
 
@@ -484,13 +485,13 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 		State:   playwright.WaitForSelectorStateVisible,
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-submit-wait-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	if err := page.Click(submitSelector, playwright.PageClickOptions{
 		Timeout: playwright.Float(15000),
 	}); err != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-submit-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, err
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(err)
 	}
 	captureBootstrapScreenshot(page, authScreenshots, "auth-submit")
 
@@ -512,11 +513,11 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 	storageState, stateErr := browserContext.StorageState()
 	if stateErr != nil {
 		captureBootstrapScreenshot(page, authScreenshots, "auth-storage-state-error")
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stateErr
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(stateErr)
 	}
 	payload, marshalErr := json.Marshal(storageState)
 	if marshalErr != nil {
-		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, marshalErr
+		return domain.BootstrapLoginOutcomeAuthRuntimeError, nil, authScreenshots, stackerr.WithStack(marshalErr)
 	}
 
 	return domain.BootstrapLoginOutcomeSuccess, payload, authScreenshots, nil
@@ -525,7 +526,7 @@ func (a *defaultPlaywrightBootstrapAdapter) Execute(
 func fillFirstSelector(page playwright.Page, selectors []string, value string) error {
 	selector, err := firstExistingSelector(page, selectors)
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	return page.Fill(selector, value)
 }
@@ -533,7 +534,7 @@ func fillFirstSelector(page playwright.Page, selectors []string, value string) e
 func clickFirstSelector(page playwright.Page, selectors []string) error {
 	selector, err := firstExistingSelector(page, selectors)
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	return page.Click(selector)
 }

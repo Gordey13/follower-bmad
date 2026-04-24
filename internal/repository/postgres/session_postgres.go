@@ -9,6 +9,7 @@ import (
 
 	"follower/internal/audit"
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -55,7 +56,7 @@ func (r *SessionPostgresRepository) GetByAccountID(ctx context.Context, accountI
 		)
 	}
 
-	return metadata, err
+	return metadata, stackerr.WithStack(err)
 }
 
 func (r *SessionPostgresRepository) StatusSnapshot(ctx context.Context) (map[domain.SessionStatus]int64, error) {
@@ -72,7 +73,7 @@ func (r *SessionPostgresRepository) StatusSnapshot(ctx context.Context) (map[dom
 		GROUP BY status
 	`)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	defer rows.Close()
 
@@ -80,7 +81,7 @@ func (r *SessionPostgresRepository) StatusSnapshot(ctx context.Context) (map[dom
 		var status string
 		var count int64
 		if err := rows.Scan(&status, &count); err != nil {
-			return nil, err
+			return nil, stackerr.WithStack(err)
 		}
 
 		normalizedStatus := domain.SessionStatus(status)
@@ -91,7 +92,7 @@ func (r *SessionPostgresRepository) StatusSnapshot(ctx context.Context) (map[dom
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	return snapshot, nil
@@ -102,7 +103,7 @@ func (r *SessionPostgresRepository) Upsert(
 	metadata domain.SessionMetadata,
 ) (domain.SessionMetadata, error) {
 	if err := metadata.Validate(); err != nil {
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	row := r.pool.QueryRow(ctx, `
@@ -141,7 +142,7 @@ func (r *SessionPostgresRepository) Upsert(
 
 	updatedMetadata, err := scanSessionMetadata(row)
 	if err != nil {
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	if r.auditLog != nil {
@@ -209,7 +210,7 @@ func (r *SessionPostgresRepository) UpdateStatus(
 	}
 
 	if err != nil {
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	if r.auditLog != nil {
@@ -262,7 +263,7 @@ func (r *SessionPostgresRepository) MarkRestored(
 	}
 
 	if err != nil {
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	if r.auditLog != nil {
@@ -301,7 +302,7 @@ func scanSessionMetadata(row pgx.Row) (domain.SessionMetadata, error) {
 		&lastRestoredAt,
 	)
 	if err != nil {
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	metadata.Status = domain.SessionStatus(status)

@@ -16,6 +16,7 @@ import (
 	"follower/internal/observability"
 	"follower/internal/repository"
 	postgresrepo "follower/internal/repository/postgres"
+	"follower/internal/stackerr"
 	"follower/internal/storage"
 	"follower/internal/worker"
 
@@ -41,12 +42,12 @@ func buildRuntimeDependencies(
 ) (runtimeDependencies, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.Postgres.URL)
 	if err != nil {
-		return runtimeDependencies{}, fmt.Errorf("parse postgres config: %w", err)
+		return runtimeDependencies{}, stackerr.Wrap(err, "parse postgres config")
 	}
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {
-		return runtimeDependencies{}, fmt.Errorf("create postgres pool: %w", err)
+		return runtimeDependencies{}, stackerr.Wrap(err, "create postgres pool")
 	}
 
 	minioClient, err := minio.New(cfg.MinIO.Endpoint, &minio.Options{
@@ -55,7 +56,7 @@ func buildRuntimeDependencies(
 	})
 	if err != nil {
 		pool.Close()
-		return runtimeDependencies{}, fmt.Errorf("create minio client: %w", err)
+		return runtimeDependencies{}, stackerr.Wrap(err, "create minio client")
 	}
 
 	guardrails := domain.RuntimeGuardrails{
@@ -87,9 +88,21 @@ func buildRuntimeDependencies(
 	})
 	cancel()
 	if err != nil && logger != nil {
-		logger.Warn("bootstrap audit event skipped",
-			"action", "config.runtime_guardrails_loaded",
-			"error", err,
+		logger.Warn(
+			"bootstrap audit event skipped",
+			observability.ErrorLifecycleAttrsWithError(
+				observability.LifecycleContext{
+					Component:  "app.runtime_dependencies",
+					TaskID:     "n/a",
+					AccountID:  "n/a",
+					Attempt:    0,
+					ErrorCode:  appLifecycleErrorCode(err),
+					DurationMS: 0,
+				},
+				err,
+				"bootstrap audit event skipped",
+				"action", "config.runtime_guardrails_loaded",
+			)...,
 		)
 	}
 
@@ -106,9 +119,21 @@ func buildRuntimeDependencies(
 	})
 	cancel()
 	if err != nil && logger != nil {
-		logger.Warn("bootstrap audit event skipped",
-			"action", "readiness.baseline_verified",
-			"error", err,
+		logger.Warn(
+			"bootstrap audit event skipped",
+			observability.ErrorLifecycleAttrsWithError(
+				observability.LifecycleContext{
+					Component:  "app.runtime_dependencies",
+					TaskID:     "n/a",
+					AccountID:  "n/a",
+					Attempt:    0,
+					ErrorCode:  appLifecycleErrorCode(err),
+					DurationMS: 0,
+				},
+				err,
+				"bootstrap audit event skipped",
+				"action", "readiness.baseline_verified",
+			)...,
 		)
 	}
 
@@ -121,7 +146,7 @@ func buildRuntimeDependencies(
 	followRunner, err := browser.NewFollowFlowRunner(cfg.Browser.Engine, logger)
 	if err != nil {
 		pool.Close()
-		return runtimeDependencies{}, fmt.Errorf("create follow flow runner: %w", err)
+		return runtimeDependencies{}, stackerr.Wrap(err, "create follow flow runner")
 	}
 	credentialResolver := credentials.NewResolver()
 	bootstrapRunner, err := browser.NewBootstrapLoginRunner(
@@ -131,12 +156,12 @@ func buildRuntimeDependencies(
 	)
 	if err != nil {
 		pool.Close()
-		return runtimeDependencies{}, fmt.Errorf("create bootstrap login runner: %w", err)
+		return runtimeDependencies{}, stackerr.Wrap(err, "create bootstrap login runner")
 	}
 	verifyRunner, err := browser.NewVerifyFlowRunner(cfg.Browser.Engine, logger)
 	if err != nil {
 		pool.Close()
-		return runtimeDependencies{}, fmt.Errorf("create verify flow runner: %w", err)
+		return runtimeDependencies{}, stackerr.Wrap(err, "create verify flow runner")
 	}
 	taskRepository := postgresrepo.NewTaskRepository(pool, auditLog)
 	resultRepository := postgresrepo.NewResultRepository(pool, auditLog)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/playwright-community/playwright-go"
 )
@@ -28,7 +29,7 @@ func (a *defaultPlaywrightFollowAdapter) Warmup(
 ) error {
 	runtime, err := newPlaywrightFollowRuntime(ctx, input)
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	defer runtime.close()
 
@@ -66,7 +67,7 @@ func (a *defaultPlaywrightFollowAdapter) RunFollowAction(
 ) (domain.FollowFlowOutcome, error) {
 	runtime, err := newPlaywrightFollowRuntime(ctx, input)
 	if err != nil {
-		return "", err
+		return "", stackerr.WithStack(err)
 	}
 	defer runtime.close()
 
@@ -161,22 +162,22 @@ func newPlaywrightFollowRuntime(
 	input domain.FollowFlowInput,
 ) (*playwrightFollowRuntime, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	targetURL, err := normalizeOskellyTargetProfileURL(input.TargetProfile)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	storageState, err := parsePlaywrightStorageStatePayload(input.SessionPayload)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	pw, err := playwright.Run()
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	browserInstance, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
@@ -184,7 +185,7 @@ func newPlaywrightFollowRuntime(
 	})
 	if err != nil {
 		_ = pw.Stop()
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	browserContext, err := browserInstance.NewContext(playwright.BrowserNewContextOptions{
@@ -193,7 +194,7 @@ func newPlaywrightFollowRuntime(
 	if err != nil {
 		_ = browserInstance.Close()
 		_ = pw.Stop()
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	page, err := browserContext.NewPage()
@@ -201,7 +202,7 @@ func newPlaywrightFollowRuntime(
 		_ = browserContext.Close()
 		_ = browserInstance.Close()
 		_ = pw.Stop()
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	response, err := page.Goto(targetURL, playwright.PageGotoOptions{
@@ -212,7 +213,7 @@ func newPlaywrightFollowRuntime(
 		_ = browserContext.Close()
 		_ = browserInstance.Close()
 		_ = pw.Stop()
-		return nil, normalizePlaywrightFollowError(err)
+		return nil, stackerr.WithStack(normalizePlaywrightFollowError(err))
 	}
 	if response != nil && response.Status() >= 400 {
 		_ = browserContext.Close()
@@ -285,7 +286,7 @@ func detectPlaywrightFollowState(page playwright.Page) (followControlState, stri
 
 	selector, exists, err := firstVisibleSelector(page, defaultOskellyFollowRules.Selectors.FollowControlPaths)
 	if err != nil {
-		return followControlStateUnknown, "", err
+		return followControlStateUnknown, "", stackerr.WithStack(err)
 	}
 	if !exists {
 		return followControlStateUnavailable, "", nil
@@ -293,7 +294,7 @@ func detectPlaywrightFollowState(page playwright.Page) (followControlState, stri
 
 	enabled, err := selectorIsEnabled(page, selector)
 	if err != nil {
-		return followControlStateUnknown, "", err
+		return followControlStateUnknown, "", stackerr.WithStack(err)
 	}
 	if !enabled {
 		return followControlStateUnavailable, selector, nil
@@ -309,7 +310,7 @@ func firstVisibleSelector(
 	for _, selector := range selectors {
 		visible, err := selectorHasVisibleElement(page, selector)
 		if err != nil {
-			return "", false, err
+			return "", false, stackerr.WithStack(err)
 		}
 		if !visible {
 			continue
@@ -323,7 +324,7 @@ func selectorIsEnabled(page playwright.Page, selector string) (bool, error) {
 	locator := page.Locator(selector).First()
 	count, err := page.Locator(selector).Count()
 	if err != nil {
-		return false, err
+		return false, stackerr.WithStack(err)
 	}
 	if count == 0 {
 		return false, nil
@@ -331,7 +332,7 @@ func selectorIsEnabled(page playwright.Page, selector string) (bool, error) {
 
 	isEnabled, err := locator.IsEnabled()
 	if err != nil {
-		return false, err
+		return false, stackerr.WithStack(err)
 	}
 	if !isEnabled {
 		return false, nil
@@ -369,7 +370,7 @@ func selectorHasVisibleElement(page playwright.Page, selector string) (bool, err
 	locator := page.Locator(selector)
 	count, err := locator.Count()
 	if err != nil {
-		return false, err
+		return false, stackerr.WithStack(err)
 	}
 	if count == 0 {
 		return false, nil
@@ -433,7 +434,7 @@ func clickVisibleFollowControl(page playwright.Page, selector string) (bool, err
 	locator := page.Locator(selector)
 	count, err := locator.Count()
 	if err != nil {
-		return false, err
+		return false, stackerr.WithStack(err)
 	}
 	if count == 0 {
 		return false, nil
@@ -476,7 +477,7 @@ func clickVisibleFollowControl(page playwright.Page, selector string) (bool, err
 func pageButtonTexts(page playwright.Page) ([]string, error) {
 	value, err := page.Evaluate(`() => Array.from(document.querySelectorAll('button')).map((button) => (button.innerText || '').trim())`)
 	if err != nil || value == nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	texts := []string{}

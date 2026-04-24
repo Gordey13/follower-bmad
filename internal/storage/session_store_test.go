@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 )
@@ -169,6 +170,50 @@ func TestSessionStoreLoadCorruptedObject(t *testing.T) {
 	_, err := store.Load(context.Background(), accountID, objectKey)
 	if !domain.IsDomainErrorCode(err, domain.ErrorCodeSessionPayloadCorrupted) {
 		t.Fatalf("expected %s, got %v", domain.ErrorCodeSessionPayloadCorrupted, err)
+	}
+}
+
+func TestSessionStoreSaveWrapsUnexpectedGetError(t *testing.T) {
+	t.Parallel()
+
+	accountID := uuid.New()
+	client := newFakeSessionObjectClient()
+	rootErr := errors.New("backend unavailable")
+	client.getErr = rootErr
+	store := NewSessionStore(client, "artifacts")
+
+	_, err := store.Save(context.Background(), accountID, "user@example.com", 1, []byte(`{"cookies":[]}`))
+	if err == nil {
+		t.Fatal("expected Save() error")
+	}
+	if !errors.Is(err, rootErr) {
+		t.Fatalf("expected wrapped backend error, got %v", err)
+	}
+	var stackErr *stackerr.Error
+	if !errors.As(err, &stackErr) {
+		t.Fatalf("expected stackerr-wrapped error, got %T", err)
+	}
+}
+
+func TestSessionStoreLoadWrapsUnexpectedGetError(t *testing.T) {
+	t.Parallel()
+
+	accountID := uuid.New()
+	client := newFakeSessionObjectClient()
+	rootErr := errors.New("storage backend unavailable")
+	client.getErr = rootErr
+	store := NewSessionStore(client, "artifacts")
+
+	_, err := store.Load(context.Background(), accountID, SessionPayloadObjectKey("user@example.com"))
+	if err == nil {
+		t.Fatal("expected Load() error")
+	}
+	if !errors.Is(err, rootErr) {
+		t.Fatalf("expected wrapped backend error, got %v", err)
+	}
+	var stackErr *stackerr.Error
+	if !errors.As(err, &stackErr) {
+		t.Fatalf("expected stackerr-wrapped error, got %T", err)
 	}
 }
 

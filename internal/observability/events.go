@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"follower/internal/audit"
+	"follower/internal/stackerr"
 )
 
 const (
@@ -178,6 +179,19 @@ func LifecycleAttrs(context LifecycleContext, extras ...any) []any {
 func ErrorLifecycleAttrs(context LifecycleContext, diagnosticMessage string, extras ...any) []any {
 	attrs := LifecycleAttrs(context, extras...)
 	return append(attrs, FieldDiagnosticMessage, SanitizeDiagnosticMessage(diagnosticMessage))
+}
+
+func ErrorLifecycleAttrsWithError(
+	context LifecycleContext,
+	err error,
+	diagnosticMessage string,
+	extras ...any,
+) []any {
+	attrs := ErrorLifecycleAttrs(context, diagnosticMessage, extras...)
+	if err != nil {
+		attrs = append(attrs, "error", stackerr.WithStack(err))
+	}
+	return attrs
 }
 
 func AdminLifecycleAttrs(context AdminLifecycleContext, extras ...any) []any {

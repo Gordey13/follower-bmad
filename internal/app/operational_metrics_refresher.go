@@ -11,6 +11,7 @@ import (
 	"follower/internal/config"
 	"follower/internal/domain"
 	"follower/internal/observability"
+	"follower/internal/stackerr"
 )
 
 type operationalTaskSnapshotRepository interface {
@@ -65,7 +66,21 @@ func (r *operationalMetricsRefresher) Run(ctx context.Context) {
 	}
 
 	if err := r.RefreshOnce(ctx); shouldLogRefreshError(ctx, err) {
-		r.logger.Warn("operational metrics refresh failed", "component", "observability.operational_metrics", "error", err)
+		r.logger.Warn(
+			"operational metrics refresh failed",
+			observability.ErrorLifecycleAttrsWithError(
+				observability.LifecycleContext{
+					Component:  "observability.operational_metrics",
+					TaskID:     "n/a",
+					AccountID:  "n/a",
+					Attempt:    0,
+					ErrorCode:  appLifecycleErrorCode(err),
+					DurationMS: 0,
+				},
+				err,
+				"operational metrics refresh failed",
+			)...,
+		)
 	}
 
 	ticker := time.NewTicker(r.interval)
@@ -77,7 +92,21 @@ func (r *operationalMetricsRefresher) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := r.RefreshOnce(ctx); shouldLogRefreshError(ctx, err) {
-				r.logger.Warn("operational metrics refresh failed", "component", "observability.operational_metrics", "error", err)
+				r.logger.Warn(
+					"operational metrics refresh failed",
+					observability.ErrorLifecycleAttrsWithError(
+						observability.LifecycleContext{
+							Component:  "observability.operational_metrics",
+							TaskID:     "n/a",
+							AccountID:  "n/a",
+							Attempt:    0,
+							ErrorCode:  appLifecycleErrorCode(err),
+							DurationMS: 0,
+						},
+						err,
+						"operational metrics refresh failed",
+					)...,
+				)
 			}
 		}
 	}
@@ -91,14 +120,14 @@ func (r *operationalMetricsRefresher) RefreshOnce(ctx context.Context) error {
 	refreshCtx, cancel := context.WithTimeout(ctx, r.queryTimeout())
 	defer cancel()
 	if err := refreshCtx.Err(); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	var errs []error
 
 	if snapshot, err := r.taskRepository.TaskQueueSnapshot(refreshCtx); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
-			return ctxErr
+			return stackerr.WithStack(ctxErr)
 		}
 		errs = append(errs, fmt.Errorf("task queue snapshot: %w", err))
 		r.recordRefreshError(err)
@@ -108,7 +137,7 @@ func (r *operationalMetricsRefresher) RefreshOnce(ctx context.Context) error {
 
 	if snapshot, err := r.accountRepository.OperationalStateSnapshot(refreshCtx); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
-			return ctxErr
+			return stackerr.WithStack(ctxErr)
 		}
 		errs = append(errs, fmt.Errorf("account operational snapshot: %w", err))
 		r.recordRefreshError(err)
@@ -118,7 +147,7 @@ func (r *operationalMetricsRefresher) RefreshOnce(ctx context.Context) error {
 
 	if snapshot, err := r.sessionRepository.StatusSnapshot(refreshCtx); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
-			return ctxErr
+			return stackerr.WithStack(ctxErr)
 		}
 		errs = append(errs, fmt.Errorf("session status snapshot: %w", err))
 		r.recordRefreshError(err)
@@ -126,7 +155,7 @@ func (r *operationalMetricsRefresher) RefreshOnce(ctx context.Context) error {
 		r.metrics.SetSessionStatusSnapshot(snapshot)
 	}
 
-	return errors.Join(errs...)
+	return stackerr.WithStack(errors.Join(errs...))
 }
 
 func (r *operationalMetricsRefresher) recordRefreshError(err error) {
@@ -181,4 +210,15 @@ func shouldLogRefreshError(ctx context.Context, err error) bool {
 		return false
 	}
 	return true
+}
+
+func appLifecycleErrorCode(err error) string {
+	if err == nil {
+		return string(domain.ErrorCodeEligible)
+	}
+	var domainErr *domain.DomainError
+	if errors.As(err, &domainErr) {
+		return string(domainErr.Code)
+	}
+	return string(domain.ErrorCodeInternal)
 }

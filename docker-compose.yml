@@ -1,0 +1,150 @@
+services:
+  follower:
+    image: follower:latest
+    depends_on:
+      - postgres
+      - minio
+      - redis
+    environment:
+      PLAYWRIGHT_DRIVER_PATH: /opt/playwright-driver
+      PLAYWRIGHT_NODEJS_PATH: /opt/playwright-driver/node
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      FOLLOWER_PROXY_ENABLED: "false"
+      FOLLOWER_SESSION_BOOTSTRAP_LOGIN_ENABLED: "true"
+      FOLLOWER_SESSION_ALLOW_MISSING_PAYLOAD_ON_FIRST_RUN: "true"
+      FOLLOWER_WORKER_LOOP_INTERVAL_SECONDS: "1"
+      OSKELLY_LOGIN: 'gm-liker@yandex.ru'
+      OSKELLY_PASSWORD: 'rWF-UhV-8pb-U7M'
+    labels:
+      follower.endpoint.healthz.host: "http://localhost:${FOLLOWER_HTTP_PORT:-8080}/healthz"
+      follower.endpoint.metrics.host: "http://localhost:${FOLLOWER_HTTP_PORT:-8080}/metrics"
+    ports:
+      - "${FOLLOWER_HTTP_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: '\\wsl$$\Ubuntu-24.04\home\kgi\follower-bmad\config.compose.yaml'
+        target: /app/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    networks: [follower-net]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    networks: [follower-net]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-follower_automation}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: '\\wsl$$\Ubuntu-24.04\home\kgi\follower-bmad\db\migrations'
+        target: /db-migrations
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: '\\wsl$$\Ubuntu-24.04\home\kgi\follower-bmad\scripts\postgres-init-migrations.sh'
+        target: /docker-entrypoint-initdb.d/010-apply-migrations.sh
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [follower-net]
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks: [follower-net]
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    networks: [follower-net]
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14250:14250" # gRPC ingest
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - type: bind
+        source: '\\wsl$$\Ubuntu-24.04\home\kgi\follower-bmad\otel-collector.yaml'
+        target: /etc/otel-collector.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - jaeger
+    networks: [follower-net]
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - type: bind
+        source: '\\wsl$$\Ubuntu-24.04\home\kgi\follower-bmad\prometheus.yaml'
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+      - follower
+    networks: [follower-net]
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - type: bind
+        source: '\\wsl$$\Ubuntu-24.04\home\kgi\follower-bmad\grafana\provisioning'
+        target: /etc/grafana/provisioning
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [follower-net]
+
+volumes:
+  postgres_data:
+  minio_data:
+  redis_data:
+  grafana-data:
+    driver: local
+
+networks:
+  follower-net:
+    external: true
+    name: codex_follower-net

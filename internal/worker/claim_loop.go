@@ -11,6 +11,7 @@ import (
 
 	"follower/internal/domain"
 	"follower/internal/observability"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 )
@@ -136,7 +137,7 @@ func (l *ClaimLoop) ClaimOnce(ctx context.Context) (domain.Task, bool, error) {
 	task, claimed, err := l.repository.ClaimNextQueued(ctx, l.workerID)
 	if err != nil {
 		l.recordErrorMetric("claim", claimLoopErrorCode(err))
-		return domain.Task{}, false, err
+		return domain.Task{}, false, stackerr.WithStack(err)
 	}
 	if !claimed {
 		return domain.Task{}, false, nil
@@ -188,7 +189,7 @@ func (l *ClaimLoop) Complete(
 	task, err := l.repository.Complete(ctx, taskID, l.workerID, finalStatus, errorCode, resultReason)
 	if err != nil {
 		l.recordErrorMetric("complete", claimLoopErrorCode(err))
-		return domain.Task{}, err
+		return domain.Task{}, stackerr.WithStack(err)
 	}
 
 	if l.metrics != nil {
@@ -226,7 +227,7 @@ func (l *ClaimLoop) runIteration(ctx context.Context) {
 	if err != nil {
 		l.logger.Warn(
 			observability.EventTaskClaimFailed,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     "n/a",
@@ -235,6 +236,7 @@ func (l *ClaimLoop) runIteration(ctx context.Context) {
 					ErrorCode:  string(claimLoopErrorCode(err)),
 					DurationMS: 0,
 				},
+				err,
 				"task claim failed",
 				"worker_id", l.workerID,
 			)...,
@@ -263,7 +265,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 	if err != nil {
 		l.logger.Warn(
 			observability.EventTaskExecutionContextPrepareFail,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -272,6 +274,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 					ErrorCode:  string(claimLoopErrorCode(err)),
 					DurationMS: 0,
 				},
+				err,
 				"execution context preparation failed",
 				"worker_id", l.workerID,
 			)...,
@@ -402,7 +405,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 		finalStatus, errorCode, resultReason := classifyFinalizationError(finalizeErr)
 		l.logger.Warn(
 			observability.EventFollowFinalizeFailed,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -411,6 +414,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 					ErrorCode:  string(errorCode),
 					DurationMS: time.Since(finalizeStartedAt).Milliseconds(),
 				},
+				finalizeErr,
 				resultReason,
 				"worker_id", l.workerID,
 				"final_status", finalStatus,
@@ -422,7 +426,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 		if _, completeErr := l.Complete(ctx, task.ID, finalStatus, errorCode, resultReason); completeErr != nil {
 			l.logger.Warn(
 				"task.complete_failed",
-				observability.ErrorLifecycleAttrs(
+				observability.ErrorLifecycleAttrsWithError(
 					observability.LifecycleContext{
 						Component:  "worker.claim_loop",
 						TaskID:     task.ID.String(),
@@ -431,6 +435,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 						ErrorCode:  string(claimLoopErrorCode(completeErr)),
 						DurationMS: diagnostics.ExecutionDurationMS,
 					},
+					completeErr,
 					"task completion after finalization failed",
 					"worker_id", l.workerID,
 					"final_status", finalStatus,
@@ -446,7 +451,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 	if _, completeErr := l.Complete(ctx, task.ID, finalStatus, errorCode, resultReason); completeErr != nil {
 		l.logger.Warn(
 			"task.complete_failed",
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -455,6 +460,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 					ErrorCode:  string(claimLoopErrorCode(completeErr)),
 					DurationMS: diagnostics.ExecutionDurationMS,
 				},
+				completeErr,
 				"task completion failed",
 				"worker_id", l.workerID,
 				"final_status", finalStatus,
@@ -474,7 +480,7 @@ func (l *ClaimLoop) releaseExecutionContext(
 		l.recordErrorMetric("release", claimLoopErrorCode(err))
 		l.logger.Warn(
 			observability.EventExecutionContextReleaseFail,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -483,6 +489,7 @@ func (l *ClaimLoop) releaseExecutionContext(
 					ErrorCode:  string(claimLoopErrorCode(err)),
 					DurationMS: 0,
 				},
+				err,
 				"execution context release failed",
 				"worker_id", l.workerID,
 			)...,
@@ -514,7 +521,7 @@ func (l *ClaimLoop) runFollowStage(
 		l.recordErrorMetric("follow.warmup", claimLoopErrorCode(err))
 		l.logger.Warn(
 			observability.EventFollowWarmupFailed,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -523,10 +530,11 @@ func (l *ClaimLoop) runFollowStage(
 					ErrorCode:  string(claimLoopErrorCode(err)),
 					DurationMS: diagnostics.WarmupDurationMS,
 				},
+				err,
 				"follow warmup failed",
 			)...,
 		)
-		return "", diagnostics, err
+		return "", diagnostics, stackerr.WithStack(err)
 	}
 
 	l.logger.Info(
@@ -560,7 +568,7 @@ func (l *ClaimLoop) runFollowStage(
 		l.recordErrorMetric("follow.execution", claimLoopErrorCode(err))
 		l.logger.Warn(
 			observability.EventFollowExecutionFailed,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -569,10 +577,11 @@ func (l *ClaimLoop) runFollowStage(
 					ErrorCode:  string(claimLoopErrorCode(err)),
 					DurationMS: diagnostics.ExecutionDurationMS,
 				},
+				err,
 				"follow execution failed",
 			)...,
 		)
-		return "", diagnostics, err
+		return "", diagnostics, stackerr.WithStack(err)
 	}
 
 	if followOutcomeIsSuccess(outcome) {
@@ -653,7 +662,7 @@ func (l *ClaimLoop) runVerifyStage(
 		l.recordErrorMetric("follow.verify", claimLoopErrorCode(err))
 		l.logger.Warn(
 			observability.EventFollowVerifyFailed,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -662,10 +671,11 @@ func (l *ClaimLoop) runVerifyStage(
 					ErrorCode:  string(claimLoopErrorCode(err)),
 					DurationMS: time.Since(startedAt).Milliseconds(),
 				},
+				err,
 				"follow verification failed",
 			)...,
 		)
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 
 	if !verification.Verified {
@@ -895,7 +905,7 @@ func (l *ClaimLoop) resolveAuthBootstrapForPreparedTask(
 
 	resolved, err := l.execution.ResolveBootstrapForClaimedTask(ctx, task, prepared)
 	if err != nil {
-		return PreparedExecutionContext{}, err
+		return PreparedExecutionContext{}, stackerr.WithStack(err)
 	}
 	if !resolved.ReadyForFollowFlow {
 		return PreparedExecutionContext{}, domain.NewDomainError(
@@ -979,7 +989,7 @@ func (l *ClaimLoop) completeAfterExecutionError(
 	if _, completeErr := l.Complete(ctx, task.ID, finalStatus, errorCode, completionReason); completeErr != nil {
 		l.logger.Warn(
 			"task.complete_failed",
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.claim_loop",
 					TaskID:     task.ID.String(),
@@ -988,6 +998,7 @@ func (l *ClaimLoop) completeAfterExecutionError(
 					ErrorCode:  string(claimLoopErrorCode(completeErr)),
 					DurationMS: 0,
 				},
+				completeErr,
 				"task completion failed after execution error",
 				"worker_id", l.workerID,
 				"final_status", finalStatus,

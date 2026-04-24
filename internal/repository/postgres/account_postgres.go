@@ -10,6 +10,7 @@ import (
 
 	"follower/internal/audit"
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -45,7 +46,7 @@ func (r *AccountPostgresRepository) CreateProxy(ctx context.Context, proxy domai
 			id, host, port, is_active
 		) VALUES ($1, $2, $3, $4)
 	`, proxy.ID, proxy.Host, proxy.Port, proxy.IsActive)
-	return err
+	return stackerr.WithStack(err)
 }
 
 func (r *AccountPostgresRepository) CreateAccount(ctx context.Context, account domain.Account) error {
@@ -87,7 +88,7 @@ func (r *AccountPostgresRepository) CreateAccount(ctx context.Context, account d
 		account.LimitReached,
 		nullableString(account.ActiveExecutionContextID),
 	)
-	return err
+	return stackerr.WithStack(err)
 }
 
 func (r *AccountPostgresRepository) GetAccountWithProxy(ctx context.Context, accountID uuid.UUID) (domain.AccountWithProxy, error) {
@@ -126,7 +127,7 @@ func (r *AccountPostgresRepository) GetAccountWithProxy(ctx context.Context, acc
 		)
 	}
 	if err != nil {
-		return domain.AccountWithProxy{}, err
+		return domain.AccountWithProxy{}, stackerr.WithStack(err)
 	}
 
 	return accountWithProxy.toAccountWithProxy(), nil
@@ -150,7 +151,7 @@ func (r *AccountPostgresRepository) OperationalStateSnapshot(
 		GROUP BY operational_state
 	`)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	defer rows.Close()
 
@@ -158,7 +159,7 @@ func (r *AccountPostgresRepository) OperationalStateSnapshot(
 		var state string
 		var count int64
 		if err := rows.Scan(&state, &count); err != nil {
-			return nil, err
+			return nil, stackerr.WithStack(err)
 		}
 
 		normalizedState := domain.AccountOperationalState(state)
@@ -169,7 +170,7 @@ func (r *AccountPostgresRepository) OperationalStateSnapshot(
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	return snapshot, nil
@@ -202,7 +203,7 @@ func (r *AccountPostgresRepository) UpdateAccountState(
 		WHERE id = $1
 	`, accountID, state, isReady, isQuarantined, isRestricted, limitReached)
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.NewDomainError(
@@ -272,7 +273,7 @@ func (r *AccountPostgresRepository) CheckEligibility(
 		}, nil
 	}
 	if err != nil {
-		return domain.EligibilityDecision{}, err
+		return domain.EligibilityDecision{}, stackerr.WithStack(err)
 	}
 
 	return domain.EvaluateAccountEligibilityWithGuardrails(
@@ -296,7 +297,7 @@ func (r *AccountPostgresRepository) ClaimAccount(
 
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return domain.Account{}, err
+		return domain.Account{}, stackerr.WithStack(err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -308,7 +309,7 @@ func (r *AccountPostgresRepository) ClaimAccount(
 		)
 	}
 	if err != nil {
-		return domain.Account{}, err
+		return domain.Account{}, stackerr.WithStack(err)
 	}
 
 	if accountWithProxy.Account.ActiveExecutionContextID == executionContextID {
@@ -336,17 +337,17 @@ func (r *AccountPostgresRepository) ClaimAccount(
 			`, accountID, domain.AccountStateBusy)
 			claimedAccount, scanErr := scanAccount(row)
 			if scanErr != nil {
-				return domain.Account{}, scanErr
+				return domain.Account{}, stackerr.WithStack(scanErr)
 			}
 			if commitErr := tx.Commit(ctx); commitErr != nil {
-				return domain.Account{}, commitErr
+				return domain.Account{}, stackerr.WithStack(commitErr)
 			}
 			r.recordLifecycleAuditClaim(ctx, accountID, executionContextID, claimedAccount.OperationalState)
 			return claimedAccount, nil
 		}
 
 		if commitErr := tx.Commit(ctx); commitErr != nil {
-			return domain.Account{}, commitErr
+			return domain.Account{}, stackerr.WithStack(commitErr)
 		}
 		return accountWithProxy.Account, nil
 	}
@@ -364,7 +365,7 @@ func (r *AccountPostgresRepository) ClaimAccount(
 	}
 
 	if err := domain.EnsureSingleActiveExecution(accountWithProxy.Account, executionContextID); err != nil {
-		return domain.Account{}, err
+		return domain.Account{}, stackerr.WithStack(err)
 	}
 
 	row := tx.QueryRow(ctx, `
@@ -392,11 +393,11 @@ func (r *AccountPostgresRepository) ClaimAccount(
 
 	claimedAccount, err := scanAccount(row)
 	if err != nil {
-		return domain.Account{}, err
+		return domain.Account{}, stackerr.WithStack(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return domain.Account{}, err
+		return domain.Account{}, stackerr.WithStack(err)
 	}
 	r.recordLifecycleAuditClaim(ctx, accountID, executionContextID, claimedAccount.OperationalState)
 
@@ -431,7 +432,7 @@ func (r *AccountPostgresRepository) ReleaseAccount(
 			fmt.Sprintf("account %s is not claimed by execution context %s", accountID.String(), executionContextID),
 		)
 	} else if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	r.recordLifecycleAuditRelease(
@@ -502,7 +503,7 @@ func scanAccount(row pgx.Row) (domain.Account, error) {
 		&account.UpdatedAt,
 	)
 	if err != nil {
-		return domain.Account{}, err
+		return domain.Account{}, stackerr.WithStack(err)
 	}
 	if proxyID != nil {
 		account.ProxyID = *proxyID
@@ -542,7 +543,7 @@ func scanAccountWithProxy(row pgx.Row) (domain.AccountWithProxy, error) {
 		&accountWithProxy.Proxy.UpdatedAt,
 	)
 	if err != nil {
-		return domain.AccountWithProxy{}, err
+		return domain.AccountWithProxy{}, stackerr.WithStack(err)
 	}
 	accountWithProxy.Account.CredentialSource = normalizeCredentialSource(domain.CredentialSource(credentialSource))
 	accountWithProxy.Account.CredentialRef = normalizeCredentialRef(credentialRef)
@@ -592,7 +593,7 @@ func scanAccountWithOptionalProxy(row pgx.Row) (accountWithOptionalProxy, error)
 		&proxyUpdatedAt,
 	)
 	if err != nil {
-		return accountWithOptionalProxy{}, err
+		return accountWithOptionalProxy{}, stackerr.WithStack(err)
 	}
 	if accountProxyID != nil {
 		result.Account.ProxyID = *accountProxyID

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 )
 
 type FollowFlowRunner interface {
@@ -75,7 +76,7 @@ func (r *MockFollowFlowRunner) runFollowAction(
 	input domain.FollowFlowInput,
 ) (domain.FollowFlowOutcome, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", stackerr.WithStack(err)
 	}
 
 	if followErr, ok := r.errorsByTarget[input.TargetProfile]; ok && followErr != nil {
@@ -137,10 +138,10 @@ func (r *PlaywrightFollowFlowRunner) runFollowAction(
 	input domain.FollowFlowInput,
 ) (domain.FollowFlowOutcome, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", stackerr.WithStack(err)
 	}
 	if err := input.TargetProfile.Validate(); err != nil {
-		return "", err
+		return "", stackerr.WithStack(err)
 	}
 	if r.adapter == nil {
 		return "", domain.NewDomainError(
@@ -151,7 +152,7 @@ func (r *PlaywrightFollowFlowRunner) runFollowAction(
 
 	outcome, err := r.adapter.RunFollowAction(ctx, input)
 	if err != nil {
-		return "", normalizePlaywrightFollowError(err)
+		return "", stackerr.WithStack(normalizePlaywrightFollowError(err))
 	}
 	if !outcome.IsValid() {
 		return "", domain.NewDomainError(
@@ -175,7 +176,7 @@ func runFollowFlow(
 	logger *slog.Logger,
 ) (domain.FollowFlowOutcome, domain.FollowFlowDiagnostics, error) {
 	if err := input.Validate(); err != nil {
-		return "", domain.FollowFlowDiagnostics{Engine: engine}, err
+		return "", domain.FollowFlowDiagnostics{Engine: engine}, stackerr.WithStack(err)
 	}
 
 	diagnostics := domain.FollowFlowDiagnostics{Engine: engine}
@@ -183,7 +184,7 @@ func runFollowFlow(
 	warmupStarted := time.Now()
 	if err := normalizeWarmupError(warmup(ctx, input)); err != nil {
 		diagnostics.WarmupDurationMS = time.Since(warmupStarted).Milliseconds()
-		return "", diagnostics, err
+		return "", diagnostics, stackerr.WithStack(err)
 	}
 	diagnostics.WarmupCompleted = true
 	diagnostics.WarmupDurationMS = time.Since(warmupStarted).Milliseconds()
@@ -192,7 +193,7 @@ func runFollowFlow(
 	outcome, err := follow(ctx, input)
 	diagnostics.ExecutionDurationMS = time.Since(executionStarted).Milliseconds()
 	if err != nil {
-		return "", diagnostics, err
+		return "", diagnostics, stackerr.WithStack(err)
 	}
 	if !outcome.IsValid() {
 		return "", diagnostics, domain.NewDomainError(

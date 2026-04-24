@@ -6,6 +6,7 @@ import (
 	"follower/internal/audit"
 	"follower/internal/domain"
 	"follower/internal/repository"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 )
@@ -42,7 +43,7 @@ func (s *QuotaService) ApplyDecision(
 
 		account, err := s.currentAccount(ctx, accountID)
 		if err != nil {
-			return err
+			return stackerr.WithStack(err)
 		}
 
 		return s.repository.UpdateAccountState(
@@ -60,7 +61,7 @@ func (s *QuotaService) ApplyDecision(
 	case domain.ErrorCodeAccountRestricted:
 		account, err := s.currentAccount(ctx, accountID)
 		if err != nil {
-			return err
+			return stackerr.WithStack(err)
 		}
 		if account.IsQuarantined || account.OperationalState == domain.AccountStateQuarantined {
 			return nil
@@ -100,7 +101,7 @@ func (s *QuotaService) EventName(decision domain.EligibilityDecision) string {
 func (s *QuotaService) currentAccount(ctx context.Context, accountID uuid.UUID) (domain.Account, error) {
 	accountWithProxy, err := s.repository.GetAccountWithProxy(ctx, accountID)
 	if err != nil {
-		return domain.Account{}, err
+		return domain.Account{}, stackerr.WithStack(err)
 	}
 
 	return accountWithProxy.Account, nil

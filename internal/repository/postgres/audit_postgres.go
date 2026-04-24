@@ -3,9 +3,9 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"follower/internal/audit"
+	"follower/internal/stackerr"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,7 +22,7 @@ func NewAuditRepository(pool *pgxpool.Pool) *AuditPostgresRepository {
 func (r *AuditPostgresRepository) Append(ctx context.Context, record audit.Record) (audit.Record, error) {
 	diagnosticFieldsJSON, err := json.Marshal(record.DiagnosticFields)
 	if err != nil {
-		return audit.Record{}, fmt.Errorf("marshal diagnostic fields: %w", err)
+		return audit.Record{}, stackerr.Wrap(err, "marshal diagnostic fields")
 	}
 
 	row := r.pool.QueryRow(ctx, `
@@ -83,7 +83,7 @@ func (r *AuditPostgresRepository) ListRecent(ctx context.Context, limit int) ([]
 		LIMIT $1
 	`, limit)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	defer rows.Close()
 
@@ -91,13 +91,13 @@ func (r *AuditPostgresRepository) ListRecent(ctx context.Context, limit int) ([]
 	for rows.Next() {
 		record, scanErr := scanAuditRecord(rows)
 		if scanErr != nil {
-			return nil, scanErr
+			return nil, stackerr.WithStack(scanErr)
 		}
 		records = append(records, record)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	return records, nil
@@ -119,13 +119,13 @@ func scanAuditRecord(row pgx.Row) (audit.Record, error) {
 		&record.CreatedAt,
 	)
 	if err != nil {
-		return audit.Record{}, err
+		return audit.Record{}, stackerr.WithStack(err)
 	}
 
 	record.ActorType = audit.ActorType(actorType)
 	if len(diagnosticFieldsJSON) > 0 {
 		if err := json.Unmarshal(diagnosticFieldsJSON, &record.DiagnosticFields); err != nil {
-			return audit.Record{}, fmt.Errorf("unmarshal diagnostic fields: %w", err)
+			return audit.Record{}, stackerr.Wrap(err, "unmarshal diagnostic fields")
 		}
 	} else {
 		record.DiagnosticFields = map[string]string{}

@@ -3,7 +3,6 @@ package browser
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"follower/internal/domain"
 	"follower/internal/observability"
 	"follower/internal/repository"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 )
@@ -66,7 +66,7 @@ func (r *SessionRestorer) Restore(
 
 	metadata, err := r.repository.GetByAccountID(ctx, accountID)
 	if err != nil {
-		return domain.SessionMetadata{}, nil, err
+		return domain.SessionMetadata{}, nil, stackerr.WithStack(err)
 	}
 
 	payload, err := r.store.Load(ctx, accountID, metadata.ObjectKey)
@@ -79,12 +79,12 @@ func (r *SessionRestorer) Restore(
 			ID:   "browser.session_restorer",
 		})
 		if _, statusErr := r.repository.UpdateStatus(auditCtx, accountID, status, errorCode); statusErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to update session status: %w", statusErr))
+			err = errors.Join(stackerr.WithStack(err), stackerr.Wrap(statusErr, "failed to update session status"))
 		}
 
 		r.logger.Warn(
 			observability.EventSessionRestoreFailed,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "browser.session_restorer",
 					TaskID:     restoreContext.TaskID,
@@ -93,13 +93,14 @@ func (r *SessionRestorer) Restore(
 					ErrorCode:  string(errorCode),
 					DurationMS: time.Since(startedAt).Milliseconds(),
 				},
+				err,
 				"session restore failed",
 				"session_revision", metadata.Revision,
 				"object_key", metadata.ObjectKey,
 			)...,
 		)
 
-		return metadata, nil, err
+		return metadata, nil, stackerr.WithStack(err)
 	}
 
 	metadata, err = r.repository.MarkRestored(
@@ -110,7 +111,7 @@ func (r *SessionRestorer) Restore(
 		accountID,
 	)
 	if err != nil {
-		return domain.SessionMetadata{}, nil, err
+		return domain.SessionMetadata{}, nil, stackerr.WithStack(err)
 	}
 
 	r.logger.Info(
@@ -146,12 +147,12 @@ func (r *SessionRestorer) Save(
 	if err == nil {
 		nextRevision = currentMetadata.Revision + 1
 	} else if !domain.IsDomainErrorCode(err, domain.ErrorCodeSessionMetadataNotFound) {
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	objectKey, err := r.store.Save(ctx, accountID, accountLogin, nextRevision, payload)
 	if err != nil {
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	metadata := domain.SessionMetadata{
@@ -170,9 +171,9 @@ func (r *SessionRestorer) Save(
 	)
 	if err != nil {
 		if cleanupErr := r.store.Delete(ctx, objectKey); cleanupErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to cleanup session object: %w", cleanupErr))
+			err = errors.Join(stackerr.WithStack(err), stackerr.Wrap(cleanupErr, "failed to cleanup session object"))
 		}
-		return domain.SessionMetadata{}, err
+		return domain.SessionMetadata{}, stackerr.WithStack(err)
 	}
 
 	r.logger.Info(

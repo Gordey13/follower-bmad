@@ -10,6 +10,7 @@ import (
 
 	"follower/internal/audit"
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -38,7 +39,7 @@ func (r *ResultPostgresRepository) Upsert(
 	result domain.FollowResult,
 ) (domain.FollowResult, error) {
 	if err := result.Validate(); err != nil {
-		return domain.FollowResult{}, err
+		return domain.FollowResult{}, stackerr.WithStack(err)
 	}
 
 	row := r.pool.QueryRow(ctx, `
@@ -191,7 +192,7 @@ func (r *ResultPostgresRepository) ListHistory(
 	query domain.FollowResultsHistoryQuery,
 ) ([]domain.FollowResultHistoryEntry, error) {
 	if err := query.Validate(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	statement, args := buildFollowResultsHistoryStatement(query)
@@ -254,7 +255,7 @@ func scanFollowResult(row pgx.Row) (domain.FollowResult, error) {
 		&updatedAt,
 	)
 	if err != nil {
-		return domain.FollowResult{}, err
+		return domain.FollowResult{}, stackerr.WithStack(err)
 	}
 
 	result.TargetProfile = domain.TargetProfileDescriptor(targetProfile)
@@ -294,7 +295,7 @@ func scanFollowResultHistoryEntry(row pgx.Row) (domain.FollowResultHistoryEntry,
 		&entry.UpdatedAt,
 	)
 	if err != nil {
-		return domain.FollowResultHistoryEntry{}, err
+		return domain.FollowResultHistoryEntry{}, stackerr.WithStack(err)
 	}
 
 	entry.TargetProfile = domain.TargetProfileDescriptor(targetProfile)

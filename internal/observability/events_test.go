@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,45 @@ func TestErrorLifecycleAttrsAddsDiagnosticMessage(t *testing.T) {
 	}
 	if got != "execution context preparation failed" {
 		t.Fatalf("expected diagnostic message %q, got %q", "execution context preparation failed", got)
+	}
+}
+
+func TestErrorLifecycleAttrsWithErrorKeepsFieldsAndAddsStructuredError(t *testing.T) {
+	t.Parallel()
+
+	attrs := ErrorLifecycleAttrsWithError(
+		LifecycleContext{
+			Component: "worker.execution_service",
+			TaskID:    "task-1",
+			AccountID: "account-1",
+			Attempt:   1,
+			ErrorCode: "internal_error",
+		},
+		errors.New("cannot connect with credentials=secret-value"),
+		"connection failed",
+	)
+
+	values := attrMap(attrs)
+	if got := values["error_code"]; got != "internal_error" {
+		t.Fatalf("expected error_code internal_error, got %q", got)
+	}
+	if got := values["diagnostic_message"]; got != "connection failed" {
+		t.Fatalf("expected diagnostic_message connection failed, got %q", got)
+	}
+
+	var hasErrorAttr bool
+	for index := 0; index < len(attrs)-1; index += 2 {
+		key, ok := attrs[index].(string)
+		if !ok || key != "error" {
+			continue
+		}
+		hasErrorAttr = true
+		if _, ok := attrs[index+1].(error); !ok {
+			t.Fatalf("expected error attribute to contain error value, got %T", attrs[index+1])
+		}
+	}
+	if !hasErrorAttr {
+		t.Fatal("expected error attribute in lifecycle attrs")
 	}
 }
 

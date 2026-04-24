@@ -10,6 +10,7 @@ import (
 	"follower/internal/audit"
 	"follower/internal/domain"
 	"follower/internal/repository"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 )
@@ -43,7 +44,7 @@ func (g *AccountGuard) Acquire(
 ) (domain.AccountWithProxy, error) {
 	decision, err := g.repository.CheckEligibility(ctx, accountID)
 	if err != nil {
-		return domain.AccountWithProxy{}, err
+		return domain.AccountWithProxy{}, stackerr.WithStack(err)
 	}
 	if !decision.Eligible {
 		decision = normalizeEligibilityDecision(decision)
@@ -55,13 +56,15 @@ func (g *AccountGuard) Acquire(
 				g.logger.Error("failed to apply account quota decision",
 					"account_id", accountID.String(),
 					"error_code", resolveErrorCode(applyErr),
+					"diagnostic_message", "failed to apply account quota decision",
+					"error", stackerr.WithStack(applyErr),
 				)
 				return domain.AccountWithProxy{}, errors.Join(
 					domain.NewDomainError(
 						decision.ReasonCode,
 						fmt.Sprintf("account eligibility outcome=%s", decision.Outcome),
 					),
-					fmt.Errorf("apply quota decision: %w", applyErr),
+					stackerr.Wrap(applyErr, "apply quota decision"),
 				)
 			}
 
@@ -81,8 +84,10 @@ func (g *AccountGuard) Acquire(
 		g.logger.Warn("account claim rejected",
 			"account_id", accountID.String(),
 			"error_code", resolveErrorCode(err),
+			"diagnostic_message", "account claim rejected",
+			"error", stackerr.WithStack(err),
 		)
-		return domain.AccountWithProxy{}, err
+		return domain.AccountWithProxy{}, stackerr.WithStack(err)
 	}
 
 	accountWithProxy, err := g.repository.GetAccountWithProxy(ctx, accountID)
@@ -92,13 +97,15 @@ func (g *AccountGuard) Acquire(
 			g.logger.Error("failed to rollback claimed account",
 				"account_id", accountID.String(),
 				"error_code", resolveErrorCode(releaseErr),
+				"diagnostic_message", "failed to rollback claimed account",
+				"error", stackerr.WithStack(releaseErr),
 			)
 			return domain.AccountWithProxy{}, errors.Join(
-				err,
-				fmt.Errorf("failed to release claimed account: %w", releaseErr),
+				stackerr.WithStack(err),
+				stackerr.Wrap(releaseErr, "failed to release claimed account"),
 			)
 		}
-		return domain.AccountWithProxy{}, err
+		return domain.AccountWithProxy{}, stackerr.WithStack(err)
 	}
 
 	proxyID := ""
@@ -117,7 +124,7 @@ func (g *AccountGuard) Acquire(
 
 func (g *AccountGuard) Release(ctx context.Context, accountID uuid.UUID, executionContextID string) error {
 	if err := g.repository.ReleaseAccount(ctx, accountID, executionContextID); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	g.logger.Info("account released", "account_id", accountID.String())
@@ -138,7 +145,7 @@ func (g *AccountGuard) MarkQuarantined(ctx context.Context, accountID uuid.UUID)
 		false,
 	)
 	if err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	g.logger.Warn("account.quarantined",

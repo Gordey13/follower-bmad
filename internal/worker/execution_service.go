@@ -14,6 +14,7 @@ import (
 	"follower/internal/browser"
 	"follower/internal/domain"
 	"follower/internal/observability"
+	"follower/internal/stackerr"
 
 	"github.com/google/uuid"
 )
@@ -224,7 +225,7 @@ func (s *ExecutionService) PrepareClaimedTaskContext(
 	task domain.Task,
 ) (PreparedExecutionContext, error) {
 	if err := validateClaimedTaskForPreparation(task); err != nil {
-		return PreparedExecutionContext{}, err
+		return PreparedExecutionContext{}, stackerr.WithStack(err)
 	}
 
 	prepared, err := s.prepareExecutionContext(
@@ -301,7 +302,7 @@ func (s *ExecutionService) ResolveBootstrapForClaimedTask(
 		errorCode := executionErrorCode(err)
 		s.logger.Warn(
 			observability.EventBootstrapLoginFailed,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.execution_service",
 					TaskID:     task.ID.String(),
@@ -310,13 +311,14 @@ func (s *ExecutionService) ResolveBootstrapForClaimedTask(
 					ErrorCode:  string(errorCode),
 					DurationMS: time.Since(startedAt).Milliseconds(),
 				},
+				err,
 				"bootstrap login runner failed",
 			)...,
 		)
-		return PreparedExecutionContext{}, err
+		return PreparedExecutionContext{}, stackerr.WithStack(err)
 	}
 	if err := result.Validate(); err != nil {
-		return PreparedExecutionContext{}, err
+		return PreparedExecutionContext{}, stackerr.WithStack(err)
 	}
 	s.persistBootstrapAuthScreenshots(ctx, task, result.AuthScreenshots)
 
@@ -409,7 +411,7 @@ func (s *ExecutionService) prepareExecutionContext(
 
 	accountWithProxy, err := s.guard.Acquire(ctx, accountID, executionContextID)
 	if err != nil {
-		return PreparedExecutionContext{}, err
+		return PreparedExecutionContext{}, stackerr.WithStack(err)
 	}
 
 	restoreCtx := ctx
@@ -436,13 +438,13 @@ func (s *ExecutionService) prepareExecutionContext(
 		if releaseErr != nil {
 			err = errors.Join(
 				err,
-				fmt.Errorf("failed to release account after restore error: %w", releaseErr),
+				stackerr.Wrap(releaseErr, "failed to release account after restore error"),
 			)
 		}
 
 		s.logger.Warn(
 			observability.EventExecutionContextPrepareFail,
-			observability.ErrorLifecycleAttrs(
+			observability.ErrorLifecycleAttrsWithError(
 				observability.LifecycleContext{
 					Component:  "worker.execution_service",
 					TaskID:     trace.TaskID.String(),
@@ -451,12 +453,13 @@ func (s *ExecutionService) prepareExecutionContext(
 					ErrorCode:  string(executionErrorCode(err)),
 					DurationMS: time.Since(startedAt).Milliseconds(),
 				},
+				err,
 				"execution context preparation failed",
 				"execution_context_id", executionContextID,
 			)...,
 		)
 
-		return PreparedExecutionContext{}, err
+		return PreparedExecutionContext{}, stackerr.WithStack(err)
 	}
 
 	prepared := PreparedExecutionContext{
@@ -532,10 +535,10 @@ func (s *ExecutionService) VerifyFollowResult(
 
 	result, err := s.verifyRunner.VerifyFollowResult(ctx, input)
 	if err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 	if err := result.Validate(); err != nil {
-		return domain.FollowVerificationResult{}, err
+		return domain.FollowVerificationResult{}, stackerr.WithStack(err)
 	}
 
 	return result, nil
@@ -548,7 +551,7 @@ func (s *ExecutionService) GetFollowResultsHistory(
 	startedAt := time.Now()
 
 	if err := query.Validate(); err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 	if s.resultRepository == nil {
 		return nil, domain.NewDomainError(
@@ -559,7 +562,7 @@ func (s *ExecutionService) GetFollowResultsHistory(
 
 	history, err := s.resultRepository.ListHistory(ctx, query)
 	if err != nil {
-		return nil, err
+		return nil, stackerr.WithStack(err)
 	}
 
 	accountID := ""
@@ -593,7 +596,7 @@ func (s *ExecutionService) FinalizeFollowExecution(
 	startedAt := time.Now()
 
 	if err := input.Validate(); err != nil {
-		return domain.FollowResult{}, err
+		return domain.FollowResult{}, stackerr.WithStack(err)
 	}
 	if s.screenshotStore == nil || s.artifactStore == nil {
 		return domain.FollowResult{}, domain.NewDomainError(
@@ -610,7 +613,7 @@ func (s *ExecutionService) FinalizeFollowExecution(
 
 	screenshotObjectKey, artifactObjectKeys, err := s.persistFollowArtifacts(ctx, input)
 	if err != nil {
-		return domain.FollowResult{}, err
+		return domain.FollowResult{}, stackerr.WithStack(err)
 	}
 
 	sessionRevision := input.SessionRevision
@@ -626,9 +629,9 @@ func (s *ExecutionService) FinalizeFollowExecution(
 		)
 		if saveErr != nil {
 			cleanupErr := s.cleanupFollowArtifacts(ctx, screenshotObjectKey, artifactObjectKeys)
-			err = saveErr
+			err = stackerr.WithStack(saveErr)
 			if cleanupErr != nil {
-				err = errors.Join(err, cleanupErr)
+				err = errors.Join(err, stackerr.WithStack(cleanupErr))
 			}
 			return domain.FollowResult{}, err
 		}
@@ -659,9 +662,9 @@ func (s *ExecutionService) FinalizeFollowExecution(
 		)
 		var persistedErr error = persistErr
 		if cleanupErr != nil {
-			persistedErr = errors.Join(persistedErr, cleanupErr)
+			persistedErr = errors.Join(persistedErr, stackerr.WithStack(cleanupErr))
 		}
-		return domain.FollowResult{}, persistedErr
+		return domain.FollowResult{}, stackerr.WithStack(persistedErr)
 	}
 
 	s.logger.Info(
@@ -708,7 +711,7 @@ func (s *ExecutionService) completePreparationFailure(
 	if completionErr != nil {
 		return errors.Join(
 			prepareErr,
-			fmt.Errorf("failed to record preparation failure outcome: %w", completionErr),
+			stackerr.Wrap(completionErr, "failed to record preparation failure outcome"),
 		)
 	}
 
@@ -856,7 +859,7 @@ func (s *ExecutionService) persistBootstrapAuthScreenshots(
 		if err != nil {
 			s.logger.Warn(
 				"artifact.save_failed",
-				observability.ErrorLifecycleAttrs(
+				observability.ErrorLifecycleAttrsWithError(
 					observability.LifecycleContext{
 						Component:  "worker.execution_service",
 						TaskID:     task.ID.String(),
@@ -865,6 +868,7 @@ func (s *ExecutionService) persistBootstrapAuthScreenshots(
 						ErrorCode:  string(domain.ErrorCodeArtifactPersistFailed),
 						DurationMS: time.Since(startedAt).Milliseconds(),
 					},
+					err,
 					"persist bootstrap auth screenshot failed",
 					"artifact_name", artifactName,
 					"stage", stage,

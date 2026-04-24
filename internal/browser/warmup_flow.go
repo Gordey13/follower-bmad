@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/playwright-community/playwright-go"
 )
@@ -24,10 +25,10 @@ type playwrightFollowAdapter interface {
 
 func runMockWarmupFlow(ctx context.Context, input domain.FollowFlowInput) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	if err := input.TargetProfile.Validate(); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	return nil
 }
@@ -38,16 +39,16 @@ func runPlaywrightWarmupFlow(
 	adapter ...playwrightWarmupAdapter,
 ) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	if err := input.TargetProfile.Validate(); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	if _, err := normalizeOskellyTargetProfileURL(input.TargetProfile); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 	if _, err := parsePlaywrightStorageStatePayload(input.SessionPayload); err != nil {
-		return err
+		return stackerr.WithStack(err)
 	}
 
 	selectedAdapter := playwrightWarmupAdapter(&defaultPlaywrightFollowAdapter{})
@@ -55,7 +56,7 @@ func runPlaywrightWarmupFlow(
 		selectedAdapter = adapter[0]
 	}
 	if err := selectedAdapter.Warmup(ctx, input); err != nil {
-		return normalizePlaywrightFollowError(err)
+		return stackerr.WithStack(normalizePlaywrightFollowError(err))
 	}
 
 	return nil
@@ -71,7 +72,7 @@ func normalizeWarmupError(err error) error {
 			"follow warmup interrupted by context timeout/cancel",
 		)
 	}
-	return err
+	return stackerr.WithStack(err)
 }
 
 func parsePlaywrightStorageStatePayload(payload []byte) (*playwright.OptionalStorageState, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"follower/internal/domain"
+	"follower/internal/stackerr"
 
 	"github.com/playwright-community/playwright-go"
 )
@@ -15,21 +16,21 @@ func (a *defaultPlaywrightVerifyAdapter) InspectFollowState(
 	input domain.FollowVerificationInput,
 ) (playwrightVerifyDetection, error) {
 	if err := ctx.Err(); err != nil {
-		return playwrightVerifyDetection{}, err
+		return playwrightVerifyDetection{}, stackerr.WithStack(err)
 	}
 
 	targetURL, err := normalizeOskellyTargetProfileURL(input.TargetProfile)
 	if err != nil {
-		return playwrightVerifyDetection{}, err
+		return playwrightVerifyDetection{}, stackerr.WithStack(err)
 	}
 	storageState, err := parsePlaywrightStorageStatePayload(input.SessionPayload)
 	if err != nil {
-		return playwrightVerifyDetection{}, err
+		return playwrightVerifyDetection{}, stackerr.WithStack(err)
 	}
 
 	playwrightInstance, err := playwright.Run()
 	if err != nil {
-		return playwrightVerifyDetection{}, err
+		return playwrightVerifyDetection{}, stackerr.WithStack(err)
 	}
 	defer playwrightInstance.Stop()
 
@@ -37,7 +38,7 @@ func (a *defaultPlaywrightVerifyAdapter) InspectFollowState(
 		Headless: playwright.Bool(true),
 	})
 	if err != nil {
-		return playwrightVerifyDetection{}, err
+		return playwrightVerifyDetection{}, stackerr.WithStack(err)
 	}
 	defer browserInstance.Close()
 
@@ -45,13 +46,13 @@ func (a *defaultPlaywrightVerifyAdapter) InspectFollowState(
 		StorageState: storageState,
 	})
 	if err != nil {
-		return playwrightVerifyDetection{}, err
+		return playwrightVerifyDetection{}, stackerr.WithStack(err)
 	}
 	defer browserContext.Close()
 
 	page, err := browserContext.NewPage()
 	if err != nil {
-		return playwrightVerifyDetection{}, err
+		return playwrightVerifyDetection{}, stackerr.WithStack(err)
 	}
 
 	response, gotoErr := page.Goto(targetURL, playwright.PageGotoOptions{
