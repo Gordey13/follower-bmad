@@ -57,9 +57,9 @@ func TestFollowResultValidate(t *testing.T) {
 		Outcome:             FollowFlowOutcomeCompleted,
 		Verified:            true,
 		VerificationSignal:  FollowVerificationSignalFollowConfirmed,
-		ScreenshotObjectKey: "accounts/" + accountID.String() + "/tasks/" + taskID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: accountID.String() + "/screenshot/2026-04-23-101112.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + accountID.String() + "/tasks/" + taskID.String() + "/attempts/1/artifacts/execution.json",
+			accountID.String() + "/artifacts/2026-04-23-101113.json",
 		},
 	}
 	if err := result.Validate(); err != nil {

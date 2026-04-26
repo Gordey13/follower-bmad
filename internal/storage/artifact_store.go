@@ -3,8 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
-	"path"
-	"strings"
+	"time"
 
 	"follower/internal/domain"
 
@@ -26,27 +25,13 @@ func NewArtifactStore(client sessionObjectClient, bucket string) *ArtifactStore 
 func (s *ArtifactStore) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
-	taskID uuid.UUID,
-	attempt int,
-	artifactName string,
+	accountLogin string,
 	payload []byte,
 ) (string, error) {
 	if accountID == uuid.Nil {
 		return "", domain.NewDomainError(
 			domain.ErrorCodeInvalidAccountIdentifier,
 			"artifact save requires non-empty account id",
-		)
-	}
-	if taskID == uuid.Nil {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeInvalidTaskIdentifier,
-			"artifact save requires non-empty task id",
-		)
-	}
-	if attempt <= 0 {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeInvalidTaskTransition,
-			fmt.Sprintf("artifact save attempt must be > 0, got %d", attempt),
 		)
 	}
 	if len(payload) == 0 {
@@ -56,12 +41,11 @@ func (s *ArtifactStore) Save(
 		)
 	}
 
-	safeName, err := sanitizeArtifactName(artifactName)
-	if err != nil {
-		return "", err
-	}
-
-	objectKey := ExecutionArtifactObjectKey(accountID, taskID, attempt, safeName)
+	ownerKey := ResolveObjectOwnerKey(accountLogin, accountID)
+	objectKey := ExecutionArtifactObjectKey(
+		ownerKey,
+		NextUniqueKeyTimestamp(ownerKey, "artifact", time.Now()),
+	)
 	if err := s.client.Put(ctx, s.bucket, objectKey, payload); err != nil {
 		return "", domain.NewDomainError(
 			domain.ErrorCodeArtifactPersistFailed,
@@ -74,30 +58,4 @@ func (s *ArtifactStore) Save(
 
 func (s *ArtifactStore) Delete(ctx context.Context, objectKey string) error {
 	return s.client.Delete(ctx, s.bucket, objectKey)
-}
-
-func sanitizeArtifactName(name string) (string, error) {
-	normalized := strings.TrimSpace(name)
-	if normalized == "" {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeArtifactPersistFailed,
-			"artifact name must not be empty",
-		)
-	}
-
-	cleaned := path.Clean(normalized)
-	if cleaned == "." || strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "..") {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeArtifactPersistFailed,
-			fmt.Sprintf("artifact name %q is unsafe", name),
-		)
-	}
-	if strings.Contains(cleaned, "/") {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeArtifactPersistFailed,
-			fmt.Sprintf("artifact name %q must not contain path separators", name),
-		)
-	}
-
-	return cleaned, nil
 }

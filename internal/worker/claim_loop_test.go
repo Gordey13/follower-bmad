@@ -159,9 +159,9 @@ func (m *mockClaimLoopExecutionService) FinalizeFollowExecution(
 		VerificationSignal:  input.Verification.Signal,
 		VerificationReason:  input.Verification.Reason,
 		ErrorCode:           input.Verification.ErrorCode,
-		ScreenshotObjectKey: "accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: input.AccountID.String() + "/screenshot/2026-04-23-101112.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/artifacts/execution.json",
+			input.AccountID.String() + "/artifacts/2026-04-23-101113.json",
 		},
 	}, nil
 }
@@ -1046,9 +1046,9 @@ func TestRunIterationReauthenticatesWhenFollowRequiresAuthBootstrap(t *testing.T
 					Verified:            input.Verification.Verified,
 					VerificationSignal:  input.Verification.Signal,
 					VerificationReason:  input.Verification.Reason,
-					ScreenshotObjectKey: "accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/screenshots/follow.png",
+					ScreenshotObjectKey: input.AccountID.String() + "/screenshot/2026-04-23-101114.png",
 					ArtifactObjectKeys: []string{
-						"accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/artifacts/execution.json",
+						input.AccountID.String() + "/artifacts/2026-04-23-101115.json",
 					},
 					SessionRevision: input.SessionRevision,
 				}, nil
@@ -1755,10 +1755,9 @@ func TestRunIterationMapsVerifyErrorToRetryAndFinalizesWithSyntheticVerification
 					Verified:           false,
 					VerificationSignal: input.Verification.Signal,
 					ErrorCode:          input.Verification.ErrorCode,
-					ScreenshotObjectKey: "accounts/" + input.AccountID.String() + "/tasks/" +
-						input.TaskID.String() + "/attempts/1/screenshots/follow.png",
+					ScreenshotObjectKey: input.AccountID.String() + "/screenshot/2026-04-23-101116.png",
 					ArtifactObjectKeys: []string{
-						"accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/artifacts/execution.json",
+						input.AccountID.String() + "/artifacts/2026-04-23-101117.json",
 					},
 				}, nil
 			},
@@ -1893,9 +1892,9 @@ func TestRunIterationMapsUnverifiedVerifyFailedResultToDeterministicErrorCode(t 
 					VerificationSignal:  input.Verification.Signal,
 					VerificationReason:  input.Verification.Reason,
 					ErrorCode:           input.Verification.ErrorCode,
-					ScreenshotObjectKey: "accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/screenshots/follow.png",
+					ScreenshotObjectKey: input.AccountID.String() + "/screenshot/2026-04-23-101118.png",
 					ArtifactObjectKeys: []string{
-						"accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/artifacts/execution.json",
+						input.AccountID.String() + "/artifacts/2026-04-23-101119.json",
 					},
 				}, nil
 			},
@@ -2022,9 +2021,9 @@ func TestRunIterationUsesVerificationPayloadForFinalization(t *testing.T) {
 					Verified:            input.Verification.Verified,
 					VerificationSignal:  input.Verification.Signal,
 					VerificationReason:  input.Verification.Reason,
-					ScreenshotObjectKey: "accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/screenshots/follow.png",
+					ScreenshotObjectKey: input.AccountID.String() + "/screenshot/2026-04-23-101120.png",
 					ArtifactObjectKeys: []string{
-						"accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/artifacts/execution.json",
+						input.AccountID.String() + "/artifacts/2026-04-23-101121.json",
 					},
 				}, nil
 			},
@@ -2147,9 +2146,9 @@ func TestRunIterationPassesPreparedSessionRevisionToFinalizationInput(t *testing
 					Verified:            input.Verification.Verified,
 					VerificationSignal:  input.Verification.Signal,
 					VerificationReason:  input.Verification.Reason,
-					ScreenshotObjectKey: "accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/screenshots/follow.png",
+					ScreenshotObjectKey: input.AccountID.String() + "/screenshot/2026-04-23-101122.png",
 					ArtifactObjectKeys: []string{
-						"accounts/" + input.AccountID.String() + "/tasks/" + input.TaskID.String() + "/attempts/1/artifacts/execution.json",
+						input.AccountID.String() + "/artifacts/2026-04-23-101123.json",
 					},
 					SessionRevision: input.SessionRevision,
 				}, nil

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"follower/internal/domain"
 
@@ -82,6 +83,7 @@ func NewSessionStore(client sessionObjectClient, bucket string) *SessionStore {
 func (s *SessionStore) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
+	accountLogin string,
 	revision int64,
 	payload []byte,
 ) (string, error) {
@@ -104,7 +106,17 @@ func (s *SessionStore) Save(
 		)
 	}
 
-	objectKey := SessionPayloadObjectKey(accountID, revision)
+	ownerKey := ResolveObjectOwnerKey(accountLogin, accountID)
+	objectKey := SessionPayloadObjectKey(ownerKey)
+	if existingPayload, err := s.client.Get(ctx, s.bucket, objectKey); err == nil {
+		historyObjectKey := SessionHistoryObjectKey(ownerKey, NextUniqueKeyTimestamp(ownerKey, "history", time.Now().UTC()))
+		if err := s.client.Put(ctx, s.bucket, historyObjectKey, existingPayload); err != nil {
+			return "", err
+		}
+	} else if !domain.IsDomainErrorCode(err, domain.ErrorCodeSessionPayloadMissing) {
+		return "", err
+	}
+
 	if err := s.client.Put(ctx, s.bucket, objectKey, payload); err != nil {
 		return "", err
 	}

@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"follower/internal/audit"
 	"follower/internal/browser"
 	"follower/internal/domain"
+	"follower/internal/storage"
 	postgresrepo "follower/internal/repository/postgres"
 
 	"github.com/google/uuid"
@@ -816,10 +816,11 @@ func newInMemoryIntegrationSessionStore() *inMemoryIntegrationSessionStore {
 func (s *inMemoryIntegrationSessionStore) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
+	accountLogin string,
 	revision int64,
 	payload []byte,
 ) (string, error) {
-	objectKey := fmtSessionObjectKey(accountID, revision)
+	objectKey := fmtSessionObjectKey(accountID, accountLogin)
 	if err := s.SaveObject(objectKey, payload); err != nil {
 		return "", err
 	}
@@ -1124,8 +1125,12 @@ func prepareWorkerTestDatabase(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-func fmtSessionObjectKey(accountID uuid.UUID, revision int64) string {
-	return "accounts/" + accountID.String() + "/sessions/" + fmt.Sprintf("%d", revision) + ".json"
+func fmtSessionObjectKey(accountID uuid.UUID, accountLogin string) string {
+	owner := accountLogin
+	if strings.TrimSpace(owner) == "" {
+		owner = accountID.String()
+	}
+	return storage.NormalizeOSKELLYLoginKey(owner) + "/latest.json"
 }
 
 func proxyBindingDisabledRuntimeGuardrails() domain.RuntimeGuardrails {

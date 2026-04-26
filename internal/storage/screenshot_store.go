@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"follower/internal/domain"
 
@@ -24,26 +25,13 @@ func NewScreenshotStore(client sessionObjectClient, bucket string) *ScreenshotSt
 func (s *ScreenshotStore) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
-	taskID uuid.UUID,
-	attempt int,
+	accountLogin string,
 	payload []byte,
 ) (string, error) {
 	if accountID == uuid.Nil {
 		return "", domain.NewDomainError(
 			domain.ErrorCodeInvalidAccountIdentifier,
 			"screenshot save requires non-empty account id",
-		)
-	}
-	if taskID == uuid.Nil {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeInvalidTaskIdentifier,
-			"screenshot save requires non-empty task id",
-		)
-	}
-	if attempt <= 0 {
-		return "", domain.NewDomainError(
-			domain.ErrorCodeInvalidTaskTransition,
-			fmt.Sprintf("screenshot save attempt must be > 0, got %d", attempt),
 		)
 	}
 	if len(payload) == 0 {
@@ -53,7 +41,11 @@ func (s *ScreenshotStore) Save(
 		)
 	}
 
-	objectKey := ScreenshotObjectKey(accountID, taskID, attempt)
+	ownerKey := ResolveObjectOwnerKey(accountLogin, accountID)
+	objectKey := ScreenshotObjectKey(
+		ownerKey,
+		NextUniqueKeyTimestamp(ownerKey, "screenshot", time.Now()),
+	)
 	if err := s.client.Put(ctx, s.bucket, objectKey, payload); err != nil {
 		return "", domain.NewDomainError(
 			domain.ErrorCodeArtifactPersistFailed,

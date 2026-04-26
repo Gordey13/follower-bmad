@@ -221,9 +221,9 @@ func seedHistoryResult(
 		VerificationSignal:  signal,
 		VerificationReason:  "history-seeded",
 		ErrorCode:           errorCode,
-		ScreenshotObjectKey: "accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: claimed.AccountID.String() + "/screenshot/2026-04-23-101112.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/artifacts/execution.json",
+			claimed.AccountID.String() + "/artifacts/2026-04-23-101113.json",
 		},
 	}
 	if _, err := resultRepository.Upsert(context.Background(), result); err != nil {

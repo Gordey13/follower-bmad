@@ -72,15 +72,14 @@ type executionResultRepository interface {
 }
 
 type executionSessionSaver interface {
-	Save(ctx context.Context, accountID uuid.UUID, payload []byte) (domain.SessionMetadata, error)
+	Save(ctx context.Context, accountID uuid.UUID, accountLogin string, payload []byte) (domain.SessionMetadata, error)
 }
 
 type executionScreenshotStore interface {
 	Save(
 		ctx context.Context,
 		accountID uuid.UUID,
-		taskID uuid.UUID,
-		attempt int,
+		accountLogin string,
 		payload []byte,
 	) (string, error)
 	Delete(ctx context.Context, objectKey string) error
@@ -90,9 +89,7 @@ type executionArtifactStore interface {
 	Save(
 		ctx context.Context,
 		accountID uuid.UUID,
-		taskID uuid.UUID,
-		attempt int,
-		artifactName string,
+		accountLogin string,
 		payload []byte,
 	) (string, error)
 	Delete(ctx context.Context, objectKey string) error
@@ -355,6 +352,7 @@ func (s *ExecutionService) ResolveBootstrapForClaimedTask(
 		ctx,
 		task.ID,
 		task.AccountID,
+		prepared.AccountWithProxy.Account.Username,
 		task.Attempt,
 		result.SessionPayload,
 		"bootstrap",
@@ -621,6 +619,7 @@ func (s *ExecutionService) FinalizeFollowExecution(
 			ctx,
 			input.TaskID,
 			input.AccountID,
+			input.AccountLogin,
 			input.Attempt,
 			input.SessionPayload,
 			"follow_finalization",
@@ -851,9 +850,7 @@ func (s *ExecutionService) persistBootstrapAuthScreenshots(
 		objectKey, err := s.artifactStore.Save(
 			ctx,
 			task.AccountID,
-			task.ID,
-			task.Attempt,
-			artifactName,
+			"",
 			payload,
 		)
 		if err != nil {
@@ -941,8 +938,7 @@ func (s *ExecutionService) persistFollowArtifacts(
 	screenshotObjectKey, err := s.screenshotStore.Save(
 		ctx,
 		input.AccountID,
-		input.TaskID,
-		input.Attempt,
+		input.AccountLogin,
 		screenshotPayload,
 	)
 	if err != nil {
@@ -992,9 +988,7 @@ func (s *ExecutionService) persistFollowArtifacts(
 	artifactObjectKey, err := s.artifactStore.Save(
 		ctx,
 		input.AccountID,
-		input.TaskID,
-		input.Attempt,
-		"execution.json",
+		input.AccountLogin,
 		artifactPayload,
 	)
 	if err != nil {
@@ -1068,6 +1062,7 @@ func (s *ExecutionService) saveSessionPayload(
 	ctx context.Context,
 	taskID uuid.UUID,
 	accountID uuid.UUID,
+	accountLogin string,
 	attempt int,
 	payload []byte,
 	saveSource string,
@@ -1080,7 +1075,7 @@ func (s *ExecutionService) saveSessionPayload(
 	}
 
 	startedAt := time.Now()
-	metadata, err := s.sessionSaver.Save(ctx, accountID, payload)
+	metadata, err := s.sessionSaver.Save(ctx, accountID, accountLogin, payload)
 	if err != nil {
 		return domain.SessionMetadata{}, newSessionSaveFailedError(
 			"session payload persistence failed",

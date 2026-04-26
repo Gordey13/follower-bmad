@@ -21,7 +21,7 @@ func TestSessionStoreWithMinIO(t *testing.T) {
 	accountID := uuid.New()
 	payload := []byte(`{"cookies":[{"name":"sid","value":"integration"}]}`)
 
-	objectKey, err := store.Save(context.Background(), accountID, 1, payload)
+	objectKey, err := store.Save(context.Background(), accountID, "integration.user@example.com", 1, payload)
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -40,7 +40,7 @@ func TestSessionStoreWithMinIOMissingObject(t *testing.T) {
 	store := NewSessionStore(NewMinioSessionObjectClient(client), bucket)
 
 	accountID := uuid.New()
-	missingObjectKey := SessionPayloadObjectKey(accountID, 99999)
+	missingObjectKey := SessionPayloadObjectKey("missing.user@example.com")
 
 	_, err := store.Load(context.Background(), accountID, missingObjectKey)
 	if !domain.IsDomainErrorCode(err, domain.ErrorCodeSessionPayloadMissing) {

@@ -387,6 +387,7 @@ func (l *ClaimLoop) executeClaimedTask(ctx context.Context, task domain.Task) {
 	finalizeInput := domain.FollowExecutionFinalizationInput{
 		TaskID:            task.ID,
 		AccountID:         task.AccountID,
+		AccountLogin:      prepared.AccountWithProxy.Account.Username,
 		TargetProfile:     task.TargetProfile,
 		Attempt:           task.Attempt,
 		SessionRevision:   prepared.SessionMetadata.Revision,

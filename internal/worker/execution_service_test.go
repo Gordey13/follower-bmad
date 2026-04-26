@@ -860,7 +860,7 @@ func TestResolveBootstrapForClaimedTaskSavesSessionAndMarksReadyForFollow(t *tes
 	service := NewExecutionService(
 		&mockExecutionContextGuard{},
 		&mockExecutionSessionRestorer{
-			saveFn: func(ctx context.Context, gotAccountID uuid.UUID, payload []byte) (domain.SessionMetadata, error) {
+			saveFn: func(ctx context.Context, gotAccountID uuid.UUID, accountLogin string, payload []byte) (domain.SessionMetadata, error) {
 				if gotAccountID != task.AccountID {
 					t.Fatalf("expected account id %s, got %s", task.AccountID.String(), gotAccountID.String())
 				}
@@ -918,15 +918,6 @@ func TestResolveBootstrapForClaimedTaskSavesSessionAndMarksReadyForFollow(t *tes
 	}
 	if artifactStore.saveCount != 2 {
 		t.Fatalf("expected 2 auth screenshots to be persisted, got %d", artifactStore.saveCount)
-	}
-	if !containsString(artifactStore.artifactNames, "bootstrap-auth-home.png") {
-		t.Fatalf("expected artifact bootstrap-auth-home.png, got %#v", artifactStore.artifactNames)
-	}
-	if !containsString(artifactStore.artifactNames, "bootstrap-auth-post-submit-profile-open.png") {
-		t.Fatalf(
-			"expected artifact bootstrap-auth-post-submit-profile-open.png, got %#v",
-			artifactStore.artifactNames,
-		)
 	}
 }
 
@@ -1093,7 +1084,7 @@ func TestResolveBootstrapForClaimedTaskReturnsSessionSaveFailedWithSourceCode(t 
 	service := NewExecutionService(
 		&mockExecutionContextGuard{},
 		&mockExecutionSessionRestorer{
-			saveFn: func(ctx context.Context, accountID uuid.UUID, payload []byte) (domain.SessionMetadata, error) {
+			saveFn: func(ctx context.Context, accountID uuid.UUID, accountLogin string, payload []byte) (domain.SessionMetadata, error) {
 				return domain.SessionMetadata{}, domain.NewDomainError(
 					domain.ErrorCodeSessionPayloadInvalid,
 					"bootstrap session payload is invalid",
@@ -1156,7 +1147,7 @@ func TestResolveBootstrapForClaimedTaskDoesNotLogSensitiveCredentialOrSessionDat
 	service := NewExecutionService(
 		&mockExecutionContextGuard{},
 		&mockExecutionSessionRestorer{
-			saveFn: func(ctx context.Context, gotAccountID uuid.UUID, payload []byte) (domain.SessionMetadata, error) {
+			saveFn: func(ctx context.Context, gotAccountID uuid.UUID, accountLogin string, payload []byte) (domain.SessionMetadata, error) {
 				return domain.SessionMetadata{
 					AccountID: gotAccountID,
 					Revision:  2,
@@ -1366,7 +1357,7 @@ func TestFinalizeFollowExecutionPersistsArtifactsResultAndSession(t *testing.T) 
 	service := NewExecutionService(
 		&mockExecutionContextGuard{},
 		&mockExecutionSessionRestorer{
-			saveFn: func(ctx context.Context, gotAccountID uuid.UUID, payload []byte) (domain.SessionMetadata, error) {
+			saveFn: func(ctx context.Context, gotAccountID uuid.UUID, accountLogin string, payload []byte) (domain.SessionMetadata, error) {
 				if gotAccountID != accountID {
 					t.Fatalf("expected account id %s, got %s", accountID.String(), gotAccountID.String())
 				}
@@ -1601,7 +1592,7 @@ func TestFinalizeFollowExecutionReturnsSessionSaveFailedWithSourceCodeAndCleansA
 	service := NewExecutionService(
 		&mockExecutionContextGuard{},
 		&mockExecutionSessionRestorer{
-			saveFn: func(ctx context.Context, accountID uuid.UUID, payload []byte) (domain.SessionMetadata, error) {
+			saveFn: func(ctx context.Context, accountID uuid.UUID, accountLogin string, payload []byte) (domain.SessionMetadata, error) {
 				return domain.SessionMetadata{}, domain.NewDomainError(
 					domain.ErrorCodeSessionPayloadInvalid,
 					"session payload is invalid",
@@ -1710,7 +1701,7 @@ func TestFinalizeFollowExecutionLogsArtifactAndResultEvents(t *testing.T) {
 	if !strings.Contains(logs, "session_revision=") {
 		t.Fatalf("expected logs to contain session_revision attribute, got %q", logs)
 	}
-	if !strings.Contains(logs, "object_key=accounts/") {
+	if !strings.Contains(logs, "object_key=") {
 		t.Fatalf("expected logs to contain object_key attribute, got %q", logs)
 	}
 	if !strings.Contains(logs, "save_source=follow_finalization") {
@@ -1747,7 +1738,7 @@ func (m *mockExecutionContextGuard) Release(
 
 type mockExecutionSessionRestorer struct {
 	restoreFn func(ctx context.Context, accountID uuid.UUID) (domain.SessionMetadata, []byte, error)
-	saveFn    func(ctx context.Context, accountID uuid.UUID, payload []byte) (domain.SessionMetadata, error)
+	saveFn    func(ctx context.Context, accountID uuid.UUID, accountLogin string, payload []byte) (domain.SessionMetadata, error)
 }
 
 func (m *mockExecutionSessionRestorer) Restore(
@@ -1763,16 +1754,17 @@ func (m *mockExecutionSessionRestorer) Restore(
 func (m *mockExecutionSessionRestorer) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
+	accountLogin string,
 	payload []byte,
 ) (domain.SessionMetadata, error) {
 	if m.saveFn != nil {
-		return m.saveFn(ctx, accountID, payload)
+		return m.saveFn(ctx, accountID, accountLogin, payload)
 	}
 	return domain.SessionMetadata{
 		AccountID: accountID,
 		Revision:  1,
 		Status:    domain.SessionStatusValid,
-		ObjectKey: "accounts/" + accountID.String() + "/sessions/1.json",
+		ObjectKey: accountID.String() + "/latest.json",
 	}, nil
 }
 
@@ -1892,12 +1884,14 @@ type mockExecutionScreenshotStore struct {
 func (m *mockExecutionScreenshotStore) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
-	taskID uuid.UUID,
-	attempt int,
+	accountLogin string,
 	payload []byte,
 ) (string, error) {
 	m.saveCount++
-	return "accounts/" + accountID.String() + "/tasks/" + taskID.String() + "/attempts/1/screenshots/follow.png", nil
+	if strings.TrimSpace(accountLogin) == "" {
+		accountLogin = accountID.String()
+	}
+	return accountLogin + "/screenshot/2026-04-23-101112.png", nil
 }
 
 func (m *mockExecutionScreenshotStore) Delete(ctx context.Context, objectKey string) error {
@@ -1906,36 +1900,26 @@ func (m *mockExecutionScreenshotStore) Delete(ctx context.Context, objectKey str
 }
 
 type mockExecutionArtifactStore struct {
-	saveCount     int
-	deleteCount   int
-	artifactNames []string
+	saveCount   int
+	deleteCount int
 }
 
 func (m *mockExecutionArtifactStore) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
-	taskID uuid.UUID,
-	attempt int,
-	artifactName string,
+	accountLogin string,
 	payload []byte,
 ) (string, error) {
 	m.saveCount++
-	m.artifactNames = append(m.artifactNames, artifactName)
-	return "accounts/" + accountID.String() + "/tasks/" + taskID.String() + "/attempts/1/artifacts/" + artifactName, nil
+	if strings.TrimSpace(accountLogin) == "" {
+		accountLogin = accountID.String()
+	}
+	return accountLogin + "/artifacts/2026-04-23-101112.json", nil
 }
 
 func (m *mockExecutionArtifactStore) Delete(ctx context.Context, objectKey string) error {
 	m.deleteCount++
 	return nil
-}
-
-func containsString(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-	return false
 }
 
 func testExecutionLogger() *slog.Logger {

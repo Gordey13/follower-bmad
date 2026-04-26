@@ -44,9 +44,9 @@ func TestResultRepositoryUpsertAndGetByTaskAttempt(t *testing.T) {
 		Verified:            true,
 		VerificationSignal:  domain.FollowVerificationSignalFollowConfirmed,
 		VerificationReason:  "ui follow state confirmed",
-		ScreenshotObjectKey: "accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: claimed.AccountID.String() + "/screenshot/2026-04-23-101112.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/artifacts/execution.json",
+			claimed.AccountID.String() + "/artifacts/2026-04-23-101113.json",
 		},
 	})
 	if err != nil {
@@ -111,9 +111,9 @@ func TestResultRepositoryUpsertIsIdempotentByTaskAttempt(t *testing.T) {
 		VerificationSignal:  domain.FollowVerificationSignalNavigationFailed,
 		VerificationReason:  "navigation timeout",
 		ErrorCode:           domain.ErrorCodeFollowNavigationFailed,
-		ScreenshotObjectKey: "accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: claimed.AccountID.String() + "/screenshot/2026-04-23-101112.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/artifacts/execution.json",
+			claimed.AccountID.String() + "/artifacts/2026-04-23-101113.json",
 		},
 	})
 	if err != nil {
@@ -129,9 +129,9 @@ func TestResultRepositoryUpsertIsIdempotentByTaskAttempt(t *testing.T) {
 		Verified:            true,
 		VerificationSignal:  domain.FollowVerificationSignalFollowConfirmed,
 		VerificationReason:  "verified on retry",
-		ScreenshotObjectKey: "accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: claimed.AccountID.String() + "/screenshot/2026-04-23-101114.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/artifacts/execution-updated.json",
+			claimed.AccountID.String() + "/artifacts/2026-04-23-101115.json",
 		},
 	})
 	if err != nil {
@@ -179,9 +179,9 @@ func TestResultRepositoryUpsertSucceedsWhenAuditFails(t *testing.T) {
 		Verified:            true,
 		VerificationSignal:  domain.FollowVerificationSignalAlreadyDone,
 		VerificationReason:  "already in target state",
-		ScreenshotObjectKey: "accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: claimed.AccountID.String() + "/screenshot/2026-04-23-101116.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + claimed.AccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/artifacts/execution.json",
+			claimed.AccountID.String() + "/artifacts/2026-04-23-101117.json",
 		},
 	})
 	if err != nil {
@@ -221,9 +221,9 @@ func TestResultRepositoryUpsertRejectsTaskAccountMismatch(t *testing.T) {
 		Verified:            true,
 		VerificationSignal:  domain.FollowVerificationSignalFollowConfirmed,
 		VerificationReason:  "ui follow state confirmed",
-		ScreenshotObjectKey: "accounts/" + otherAccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/screenshots/follow.png",
+		ScreenshotObjectKey: otherAccountID.String() + "/screenshot/2026-04-23-101118.png",
 		ArtifactObjectKeys: []string{
-			"accounts/" + otherAccountID.String() + "/tasks/" + claimed.ID.String() + "/attempts/1/artifacts/execution.json",
+			otherAccountID.String() + "/artifacts/2026-04-23-101119.json",
 		},
 	})
 	if !domain.IsDomainErrorCode(err, domain.ErrorCodeFollowResultPersistFailed) {

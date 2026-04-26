@@ -214,6 +214,7 @@ func (result FollowResult) Validate() error {
 type FollowExecutionFinalizationInput struct {
 	TaskID            uuid.UUID
 	AccountID         uuid.UUID
+	AccountLogin      string
 	TargetProfile     TargetProfileDescriptor
 	Attempt           int
 	SessionRevision   int64

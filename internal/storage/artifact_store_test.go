@@ -13,13 +13,12 @@ func TestArtifactStoreSaveAndDelete(t *testing.T) {
 	t.Parallel()
 
 	accountID := uuid.New()
-	taskID := uuid.New()
 	payload := []byte(`{"result":"ok"}`)
 
 	client := newFakeSessionObjectClient()
 	store := NewArtifactStore(client, "artifacts")
 
-	objectKey, err := store.Save(context.Background(), accountID, taskID, 1, "execution.json", payload)
+	objectKey, err := store.Save(context.Background(), accountID, "gm-liker@yandex.ru", payload)
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -37,18 +36,7 @@ func TestArtifactStoreRejectsEmptyPayload(t *testing.T) {
 
 	store := NewArtifactStore(newFakeSessionObjectClient(), "artifacts")
 
-	_, err := store.Save(context.Background(), uuid.New(), uuid.New(), 1, "execution.json", nil)
-	if !domain.IsDomainErrorCode(err, domain.ErrorCodeArtifactPersistFailed) {
-		t.Fatalf("expected %s, got %v", domain.ErrorCodeArtifactPersistFailed, err)
-	}
-}
-
-func TestArtifactStoreRejectsUnsafeArtifactName(t *testing.T) {
-	t.Parallel()
-
-	store := NewArtifactStore(newFakeSessionObjectClient(), "artifacts")
-
-	_, err := store.Save(context.Background(), uuid.New(), uuid.New(), 1, "../escape.json", []byte("{}"))
+	_, err := store.Save(context.Background(), uuid.New(), "user@example.com", nil)
 	if !domain.IsDomainErrorCode(err, domain.ErrorCodeArtifactPersistFailed) {
 		t.Fatalf("expected %s, got %v", domain.ErrorCodeArtifactPersistFailed, err)
 	}

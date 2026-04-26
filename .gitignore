@@ -20,7 +20,7 @@ scripts/
 SKILLS/
 .opencode
 .claude
-
+tests
 # Логи
 *.log
 

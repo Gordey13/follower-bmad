@@ -151,16 +151,19 @@ func TestSaveCreatesFirstRevisionWhenMetadataMissing(t *testing.T) {
 	}
 
 	store := &mockSessionStore{
-		saveFn: func(ctx context.Context, id uuid.UUID, revision int64, payload []byte) (string, error) {
+		saveFn: func(ctx context.Context, id uuid.UUID, accountLogin string, revision int64, payload []byte) (string, error) {
 			if revision != 1 {
 				t.Fatalf("expected revision 1, got %d", revision)
 			}
-			return "accounts/" + id.String() + "/sessions/1.json", nil
+			if accountLogin != "gm-liker@yandex.ru" {
+				t.Fatalf("expected account login gm-liker@yandex.ru, got %q", accountLogin)
+			}
+			return "gmliker_yandexru/latest.json", nil
 		},
 	}
 
 	restorer := NewSessionRestorer(repository, store, testLogger())
-	metadata, err := restorer.Save(context.Background(), accountID, []byte(`{"cookies":[]}`))
+	metadata, err := restorer.Save(context.Background(), accountID, "gm-liker@yandex.ru", []byte(`{"cookies":[]}`))
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -201,16 +204,19 @@ func TestSaveIncrementsRevisionAndClearsErrorCodeWhenMetadataExists(t *testing.T
 	}
 
 	store := &mockSessionStore{
-		saveFn: func(ctx context.Context, id uuid.UUID, revision int64, payload []byte) (string, error) {
+		saveFn: func(ctx context.Context, id uuid.UUID, accountLogin string, revision int64, payload []byte) (string, error) {
 			if revision != 5 {
 				t.Fatalf("expected revision 5, got %d", revision)
 			}
-			return "accounts/" + id.String() + "/sessions/5.json", nil
+			if accountLogin != "gm-liker@yandex.ru" {
+				t.Fatalf("expected account login gm-liker@yandex.ru, got %q", accountLogin)
+			}
+			return "gmliker_yandexru/latest.json", nil
 		},
 	}
 
 	restorer := NewSessionRestorer(repository, store, testLogger())
-	metadata, err := restorer.Save(context.Background(), accountID, []byte(`{"cookies":[]}`))
+	metadata, err := restorer.Save(context.Background(), accountID, "gm-liker@yandex.ru", []byte(`{"cookies":[]}`))
 	if err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -245,8 +251,8 @@ func TestSaveCompensatesWhenMetadataUpsertFails(t *testing.T) {
 	}
 
 	store := &mockSessionStore{
-		saveFn: func(ctx context.Context, id uuid.UUID, revision int64, payload []byte) (string, error) {
-			return "accounts/" + id.String() + "/sessions/1.json", nil
+		saveFn: func(ctx context.Context, id uuid.UUID, accountLogin string, revision int64, payload []byte) (string, error) {
+			return "gmliker_yandexru/latest.json", nil
 		},
 		deleteFn: func(ctx context.Context, objectKey string) error {
 			deleted = true
@@ -255,7 +261,7 @@ func TestSaveCompensatesWhenMetadataUpsertFails(t *testing.T) {
 	}
 
 	restorer := NewSessionRestorer(repository, store, testLogger())
-	_, err := restorer.Save(context.Background(), accountID, []byte(`{"cookies":[]}`))
+	_, err := restorer.Save(context.Background(), accountID, "gm-liker@yandex.ru", []byte(`{"cookies":[]}`))
 	if !errors.Is(err, upsertErr) {
 		t.Fatalf("expected upsert error, got %v", err)
 	}
@@ -419,7 +425,7 @@ func (m *mockSessionRepository) MarkRestored(ctx context.Context, accountID uuid
 }
 
 type mockSessionStore struct {
-	saveFn   func(ctx context.Context, accountID uuid.UUID, revision int64, payload []byte) (string, error)
+	saveFn   func(ctx context.Context, accountID uuid.UUID, accountLogin string, revision int64, payload []byte) (string, error)
 	loadFn   func(ctx context.Context, accountID uuid.UUID, objectKey string) ([]byte, error)
 	deleteFn func(ctx context.Context, objectKey string) error
 }
@@ -427,11 +433,12 @@ type mockSessionStore struct {
 func (m *mockSessionStore) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
+	accountLogin string,
 	revision int64,
 	payload []byte,
 ) (string, error) {
 	if m.saveFn != nil {
-		return m.saveFn(ctx, accountID, revision, payload)
+		return m.saveFn(ctx, accountID, accountLogin, revision, payload)
 	}
 	return "", nil
 }

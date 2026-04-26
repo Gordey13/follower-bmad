@@ -17,7 +17,7 @@ import (
 )
 
 type sessionPayloadStore interface {
-	Save(ctx context.Context, accountID uuid.UUID, revision int64, payload []byte) (string, error)
+	Save(ctx context.Context, accountID uuid.UUID, accountLogin string, revision int64, payload []byte) (string, error)
 	Load(ctx context.Context, accountID uuid.UUID, objectKey string) ([]byte, error)
 	Delete(ctx context.Context, objectKey string) error
 }
@@ -136,6 +136,7 @@ func (r *SessionRestorer) Restore(
 func (r *SessionRestorer) Save(
 	ctx context.Context,
 	accountID uuid.UUID,
+	accountLogin string,
 	payload []byte,
 ) (domain.SessionMetadata, error) {
 	startedAt := time.Now()
@@ -148,7 +149,7 @@ func (r *SessionRestorer) Save(
 		return domain.SessionMetadata{}, err
 	}
 
-	objectKey, err := r.store.Save(ctx, accountID, nextRevision, payload)
+	objectKey, err := r.store.Save(ctx, accountID, accountLogin, nextRevision, payload)
 	if err != nil {
 		return domain.SessionMetadata{}, err
 	}
