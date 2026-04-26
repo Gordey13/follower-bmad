@@ -23,7 +23,7 @@ SKILLS/
 tests
 # Логи
 *.log
-
+.dagu
 # Кэш Python
 __pycache__/
 *.py[cod]
@@ -60,7 +60,6 @@ node_modules/
 # Торговые данные и секреты
 *.csv
 *.parquet
-credentials/
 secrets/
 api_keys/
 
