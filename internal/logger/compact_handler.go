@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -39,11 +40,13 @@ func (h *CompactHandler) Handle(_ context.Context, r slog.Record) error {
 
 	var buf strings.Builder
 
-	buf.WriteString(r.Time.Format("15:04:05"))
+	buf.WriteString(r.Time.Format("15:04:05.000"))
 	buf.WriteByte(' ')
 	buf.WriteString(r.Level.String())
 	buf.WriteString("  ")
+	buf.WriteString("[")
 	buf.WriteString(r.Message)
+	buf.WriteString("]")
 
 	var attrParts []string
 	var durationMs int64
@@ -80,7 +83,7 @@ func (h *CompactHandler) Handle(_ context.Context, r slog.Record) error {
 	}
 
 	if hasDuration {
-		fmt.Fprintf(&buf, " (%dms)", durationMs)
+		fmt.Fprintf(&buf, " +%dms", durationMs)
 	}
 
 	buf.WriteByte('\n')
@@ -109,19 +112,50 @@ func (h *CompactHandler) WithGroup(name string) slog.Handler {
 }
 
 func formatAttr(key string, val slog.Value, durationMs *int64, hasDuration *bool) string {
-	switch key {
+	baseKey := key
+	if dot := strings.LastIndex(baseKey, "."); dot >= 0 {
+		baseKey = baseKey[dot+1:]
+	}
+
+	switch baseKey {
 	case "task_id":
 		s := val.String()
 		return "task:" + truncateID(s)
-	case "account":
+	case "account_id", "account":
 		s := val.String()
 		return "acc:" + truncateID(s)
+	case "attempt":
+		if isOne(val) {
+			return ""
+		}
+		return key + ":" + val.String()
+	case "error_code":
+		if val.String() == "eligible" {
+			return ""
+		}
+		return key + ":" + val.String()
 	case "duration_ms":
 		*durationMs = val.Int64()
 		*hasDuration = true
 		return ""
 	default:
 		return key + ":" + val.String()
+	}
+}
+
+func isOne(val slog.Value) bool {
+	switch val.Kind() {
+	case slog.KindInt64:
+		return val.Int64() == 1
+	case slog.KindUint64:
+		return val.Uint64() == 1
+	case slog.KindFloat64:
+		return val.Float64() == 1
+	case slog.KindString:
+		return val.String() == "1"
+	default:
+		n, err := strconv.ParseInt(val.String(), 10, 64)
+		return err == nil && n == 1
 	}
 }
 
