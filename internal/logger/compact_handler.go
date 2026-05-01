@@ -51,7 +51,11 @@ func (h *CompactHandler) Handle(_ context.Context, r slog.Record) error {
 
 	r.Attrs(func(a slog.Attr) bool {
 		val := a.Value.Resolve()
-		part := formatAttr(a.Key, val, &durationMs, &hasDuration)
+		key := a.Key
+		if h.group != "" {
+			key = h.group + "." + key
+		}
+		part := formatAttr(key, val, &durationMs, &hasDuration)
 		if part != "" {
 			attrParts = append(attrParts, part)
 		}

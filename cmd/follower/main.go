@@ -10,10 +10,11 @@ import (
 
 	"follower/internal/app"
 	"follower/internal/config"
+	"follower/internal/logger"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := slog.New(logger.NewCompactHandler(os.Stdout))
 
 	cfgPath := os.Getenv("FOLLOWER_CONFIG_PATH")
 	cfg, err := config.Load(cfgPath)
