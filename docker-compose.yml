@@ -22,7 +22,7 @@ services:
       - "${FOLLOWER_HTTP_PORT:-8080}:8080"
     volumes:
       - type: bind
-        source: '\\wsl$$\Ubuntu-24.04\home\kgi\follower-bmad\config.compose.yaml'
+        source: '\\wsl.localhost\Ubuntu-24.04\home\kgi\WORKSPACE\follower-bmad\config.compose.yaml'
         target: /app/config.yaml
         read_only: true
         bind:
